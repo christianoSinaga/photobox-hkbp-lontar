@@ -1,0 +1,7 @@
+web/node_modules/
+server/bin/
+server/obj/
+server/wwwroot/
+server/photos/
+server/data/
+publish/
