@@ -26,12 +26,6 @@ Kestrel mendengarkan di `http://localhost:4000` dan `http://localhost:3000`.
   Request lewat port 3000 ke path lain wajib mendapat 404, termasuk file statis Vue.
 - Jangan pernah mengandalkan header Host untuk penjagaan ini.
 
-## Domain tetap untuk QR (GitHub Pages)
-- Folder `pages/` berisi situs statis untuk GitHub Pages (repo terpisah, mis. `NAMA.github.io/photobox`).
-  `publicBaseUrl` boleh diisi alamat Pages ini; server tidak perlu tahu bedanya.
-- `pages/404.html` hanya meneruskan path `/{s|p|f|d}/{16 hex}` ke `tunnelUrl` di `pages/config.json`
-  (wajib https). Path lain ditolak. Pages tidak pernah menyimpan foto, memanggil API, atau menampilkan daftar foto.
-
 ## Kontrak API (jangan diubah tanpa persetujuan)
 Admin (port 4000):
 - `POST /api/photos`: body berupa JPEG mentah, `Content-Type: image/jpeg`.
