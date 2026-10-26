@@ -62,7 +62,7 @@ async function saveConfig(value) {
   } catch (e) {
     configStatus.value =
       e instanceof ApiError && e.status === 400
-        ? 'URL tidak valid. Contoh: https://abc123-3000.asse.devtunnels.ms'
+        ? 'URL tidak valid. Contoh: https://nama.github.io/photobox'
         : describe(e)
   } finally {
     saving.value = false
@@ -105,15 +105,16 @@ onMounted(refresh)
             <b v-else class="warn">belum diatur (tamu tidak mendapat QR)</b>
           </p>
           <p class="hint">
-            VS Code → tab <b>Ports</b> → Forward port <b>3000</b> → klik kanan → Port Visibility →
-            <b>Public</b>. Salin alamatnya ke sini.
+            Alamat yang dipakai di kode QR. Isi dengan alamat <b>GitHub Pages</b>
+            (mis. <span class="mono">https://nama.github.io/photobox</span>) jika memakai domain tetap,
+            atau langsung alamat <b>port 3000</b> dari tab Ports di VS Code (visibility <b>Public</b>).
           </p>
           <form class="row" @submit.prevent="saveConfig(baseUrlInput.trim() || null)">
             <input
               v-model="baseUrlInput"
               type="text"
               inputmode="url"
-              placeholder="https://xxxx-3000.asse.devtunnels.ms"
+              placeholder="https://nama.github.io/photobox"
               spellcheck="false"
               autocomplete="off"
             />

@@ -101,6 +101,41 @@ Pastikan sinyal di lokasi cukup kuat.
 
 ---
 
+## 3b. Domain tetap untuk QR lewat GitHub Pages (disarankan)
+
+Alamat tunnel VS Code bisa berubah, misalnya setelah laptop restart. Kalau QR langsung memakai alamat
+tunnel, QR yang sudah dipindai tamu bisa mati. Dengan GitHub Pages, QR memakai alamat tetap
+`https://NAMA.github.io/photobox/...`, dan halaman itu meneruskan tamu ke tunnel laptop.
+Foto tetap tersimpan di laptop, bukan di GitHub.
+
+**Persiapan (sekali saja):**
+1. Login ke **github.com**, klik **+** di kanan atas → **New repository**.
+2. Isi *Repository name* dengan **`photobox`**, pilih **Public**, lalu klik **Create repository**.
+3. Klik **uploading an existing file**, lalu seret ketiga file dari folder **`pages/`** di proyek ini:
+   `index.html`, `404.html`, dan `config.json`. Klik **Commit changes**.
+4. Buka **Settings → Pages**. Pada *Branch*, pilih **main** dan folder **/ (root)**, lalu **Save**.
+5. Tunggu 1–2 menit. Alamatnya akan muncul: `https://NAMA.github.io/photobox/`
+   (NAMA = username GitHub kamu).
+
+**Setiap kali photobox dinyalakan:**
+1. Forward port **3000** dengan visibility **Public** (bagian 3), lalu salin alamatnya.
+2. Di github.com, buka repo **photobox** → file **`config.json`** → ikon pensil (**Edit**).
+   Ganti isinya menjadi alamat tunnel port 3000, misalnya:
+   ```json
+   { "tunnelUrl": "https://abcd1234-3000.asse.devtunnels.ms" }
+   ```
+   Klik **Commit changes**. Perubahan aktif dalam beberapa menit.
+3. Di **Pengaturan Operator**, isi **URL publik** dengan `https://NAMA.github.io/photobox`
+   (cukup sekali, karena alamat ini tidak pernah berubah).
+
+**Tes:** buka `https://NAMA.github.io/photobox/s/0000000000000000` di HP. Kalau server menyala,
+kamu akan diteruskan ke tunnel dan melihat halaman "tidak ditemukan" dari photobox. Itu tanda pengalihan berjalan.
+
+> Kalau alamat tunnel berubah di tengah acara, cukup ubah `config.json` lagi.
+> QR yang sudah dipindai tamu tetap berfungsi.
+
+---
+
 ## 4. Menempel URL di pengaturan
 
 1. Buka **Pengaturan Operator**:
@@ -225,6 +260,8 @@ Semua foto tersimpan di folder **`server/photos`**, dan data pengelompokan per t
 - [ ] `start.ps1` sudah dijalankan. Jendela PowerShell server terbuka dan tidak ditutup.
 - [ ] Port 3000 sudah di-forward dan **Public**.
 - [ ] URL publik sudah ditempel di Ctrl+Shift+S, dan tulisan **Aktif** menampilkan alamat yang benar.
+- [ ] Jika memakai GitHub Pages: `config.json` di GitHub sudah berisi alamat tunnel port 3000 **hari ini**,
+      dan link tes `https://NAMA.github.io/photobox/s/0000000000000000` meneruskan ke photobox.
 - [ ] Jika memakai tablet: port 4000 di-forward sebagai **Private** (bukan Public), tablet sudah login GitHub,
       kamera DSLR terbaca di pilihan kamera, dan layar tablet diatur tidak pernah mati.
 - [ ] Tes satu foto dan pindai QR-nya dengan HP. Fotonya terbuka dan bisa didownload.

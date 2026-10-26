@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0c1612">
+<title>Membuka foto · Natal Remaja Naposo</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap">
+<style>
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: #0c1612; color: #f4f1ea; text-align: center;
+    font-family: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { padding: 32px 24px; max-width: 420px; }
+  .eyebrow { margin: 0; font-size: .75rem; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; color: #c9a45c; }
+  h1 { margin: 8px 0 24px; font-family: "Cormorant Garamond", Georgia, serif; font-weight: 500; font-size: 2.4rem; line-height: 1.05; }
+  p { color: #a3aea8; line-height: 1.6; }
+  .spinner {
+    width: 28px; height: 28px; margin: 0 auto 16px; border-radius: 50%;
+    border: 3px solid rgba(244,241,234,.15); border-top-color: #c9a45c; animation: spin .8s linear infinite;
+  }
+  .done .spinner { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">HKBP Lontar · 19 Desember 2026</p>
+  <h1>Natal Remaja Naposo</h1>
+  <div class="spinner"></div>
+  <p id="msg">Membuka fotomu…</p>
+</main>
+<script>
+  // GitHub Pages menyajikan file ini untuk semua alamat yang tidak ada, misalnya /photobox/s/{id}.
+  // Halaman ini hanya meneruskan ke server photobox (tunnel laptop) yang alamatnya ada di config.json.
+  // Hanya route foto/sesi dengan id 16 hex yang diteruskan; selain itu ditolak.
+  (async function () {
+    var msg = document.getElementById('msg')
+    function fail(text) {
+      document.body.classList.add('done')
+      msg.textContent = text
+    }
+
+    var match = location.pathname.match(/\/([spfd])\/([a-f0-9]{16})\/?$/)
+    if (!match) return fail('Halaman tidak ditemukan. Pastikan kamu memindai kode QR dari photobox.')
+
+    var sitePrefix = location.pathname.slice(0, match.index)
+    try {
+      var res = await fetch(sitePrefix + '/config.json', { cache: 'no-store' })
+      var config = await res.json()
+      if (!config.tunnelUrl) return fail('Link foto belum aktif. Coba lagi beberapa saat lagi.')
+      var target = new URL(config.tunnelUrl)
+      if (target.protocol !== 'https:') throw new Error('tunnelUrl harus https')
+      var base = target.origin + target.pathname.replace(/\/+$/, '')
+      location.replace(base + '/' + match[1] + '/' + match[2])
+    } catch (e) {
+      fail('Server photobox sedang tidak tersedia. Coba lagi beberapa saat lagi.')
+    }
+  })()
+</script>
+</body>
+</html>
