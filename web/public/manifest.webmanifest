@@ -1,0 +1,9 @@
+{
+  "name": "Photobox Natal Remaja Naposo HKBP Lontar 2026",
+  "short_name": "Photobox",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#0c1612",
+  "theme_color": "#0c1612"
+}

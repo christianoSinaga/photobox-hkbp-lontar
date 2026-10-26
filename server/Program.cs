@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http.Features;
 const int AdminPort = 4000;
 const int PublicPort = 3000;
 const long MaxPhotoBytes = 20 * 1024 * 1024;
+const int MaxPhotosPerSession = 30;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.ConfigureKestrel(kestrel =>
@@ -24,14 +25,16 @@ var storageDir = builder.Configuration["StorageDir"] is { Length: > 0 } dir
     : app.Environment.ContentRootPath;
 var photosDir = Path.Combine(storageDir, "photos");
 Directory.CreateDirectory(photosDir);
+var sessionsDir = Path.Combine(storageDir, "sessions");
+Directory.CreateDirectory(sessionsDir);
 var config = new ConfigStore(Path.Combine(storageDir, "data", "config.json"));
 app.Logger.LogInformation("Foto disimpan di {PhotosDir}", photosDir);
 
 var idRegex = new Regex("^[a-f0-9]{16}$", RegexOptions.CultureInvariant);
 // \z, bukan $, supaya path yang diakhiri newline tidak lolos.
-var publicPathRegex = new Regex(@"^/[pfd]/[a-f0-9]{16}\z", RegexOptions.CultureInvariant);
+var publicPathRegex = new Regex(@"^/[pfds]/[a-f0-9]{16}\z", RegexOptions.CultureInvariant);
 
-// Batas keamanan: port publik hanya boleh GET /p, /f, /d. Selain itu 404, termasuk file statis Vue.
+// Batas keamanan: port publik hanya boleh GET /p, /f, /d, /s. Selain itu 404, termasuk file statis Vue.
 // Penjagaan berdasarkan port lokal koneksi, tidak pernah berdasarkan header Host.
 app.Use(async (ctx, next) =>
 {
@@ -125,7 +128,48 @@ api.MapGet("/photos", (int? limit) =>
     return photos;
 });
 
+// Sesi = satu foto template (main) + semua foto mentah dari sesi itu, di balik satu QR.
+api.MapPost("/sessions", (SessionRequest body) =>
+{
+    var photoIds = body.Photos ?? [];
+    if (!IsValidId(body.Main) || photoIds.Count > MaxPhotosPerSession || !photoIds.All(IsValidId))
+        return Results.BadRequest(new { error = "ID foto tidak valid." });
+    if (!File.Exists(PhotoPath(body.Main!)) || !photoIds.All(p => File.Exists(PhotoPath(p))))
+        return Results.BadRequest(new { error = "Foto tidak ditemukan." });
+
+    string id;
+    do id = NewId(); while (File.Exists(SessionPath(id)));
+    var data = new SessionData(body.Main!, photoIds, DateTime.UtcNow);
+    File.WriteAllText(SessionPath(id), JsonSerializer.Serialize(data, JsonSerializerOptions.Web));
+
+    var baseUrl = config.PublicBaseUrl;
+    return Results.Ok(new PhotoCreated(id, baseUrl is null ? null : $"{baseUrl}/s/{id}"));
+});
+
+api.MapGet("/sessions", (int? limit) =>
+{
+    var take = Math.Clamp(limit ?? 60, 1, 500);
+    return new DirectoryInfo(sessionsDir)
+        .EnumerateFiles("*.json")
+        .Where(f => f.Extension == ".json" && IsValidId(Path.GetFileNameWithoutExtension(f.Name)))
+        .OrderByDescending(f => f.CreationTimeUtc)
+        .Take(take)
+        .Select(f => (Id: Path.GetFileNameWithoutExtension(f.Name), Data: ReadSession(Path.GetFileNameWithoutExtension(f.Name))))
+        .Where(s => s.Data is not null)
+        .Select(s => new SessionInfo(s.Id, s.Data!.Main, s.Data.Photos.Count, s.Data.CreatedAt))
+        .ToList();
+});
+
 // ---------- Publik (port 3000, juga bisa diakses dari port 4000) ----------
+
+app.MapGet("/s/{id}", (string id) =>
+{
+    if (!IsValidId(id)) return Results.NotFound();
+    var session = ReadSession(id);
+    if (session is null) return Results.NotFound();
+    var photoIds = session.Photos.Where(p => File.Exists(PhotoPath(p))).ToList();
+    return Results.Content(PublicPage.RenderSession(session.Main, photoIds), "text/html; charset=utf-8");
+});
 
 app.MapGet("/p/{id}", (string id) =>
 {
@@ -152,6 +196,26 @@ bool IsValidId(string? id) => id is { Length: 16 } && idRegex.IsMatch(id);
 
 string PhotoPath(string id) => Path.Combine(photosDir, id + ".jpg");
 
+string SessionPath(string id) => Path.Combine(sessionsDir, id + ".json");
+
+// File sesi divalidasi ulang saat dibaca: semua ID di dalamnya harus lolos regex sebelum dipakai.
+SessionData? ReadSession(string id)
+{
+    try
+    {
+        var path = SessionPath(id);
+        if (!File.Exists(path)) return null;
+        var data = JsonSerializer.Deserialize<SessionData>(File.ReadAllText(path), JsonSerializerOptions.Web);
+        if (data is null || !IsValidId(data.Main) || data.Photos is null || !data.Photos.All(IsValidId)) return null;
+        if (!File.Exists(PhotoPath(data.Main))) return null;
+        return data;
+    }
+    catch (Exception e) when (e is IOException or JsonException)
+    {
+        return null;
+    }
+}
+
 static string NewId() => Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
 
 static bool TryNormalizeBaseUrl(string? input, out string? normalized)
@@ -168,6 +232,9 @@ static bool TryNormalizeBaseUrl(string? input, out string? normalized)
 record ConfigDto(string? PublicBaseUrl);
 record PhotoCreated(string Id, string? Url);
 record PhotoInfo(string Id, DateTime CreatedAt);
+record SessionRequest(string? Main, List<string>? Photos);
+record SessionData(string Main, List<string> Photos, DateTime CreatedAt);
+record SessionInfo(string Id, string Main, int PhotoCount, DateTime CreatedAt);
 
 /// <summary>URL publik disimpan di memori dan di disk, supaya tetap ada setelah server restart.</summary>
 sealed class ConfigStore
@@ -208,54 +275,96 @@ sealed class ConfigStore
 
 static class PublicPage
 {
-    // id sudah lolos validasi hex, jadi aman disisipkan langsung ke HTML.
-    public static string Render(string id) => $$"""
+    // Semua id sudah lolos validasi hex, jadi aman disisipkan langsung ke HTML.
+
+    public static string Render(string id) => Layout($$"""
+          <img class="photo" src="/f/{{id}}" alt="Foto Natal Remaja Naposo">
+          <a class="btn" href="/d/{{id}}" download="natal-naposo-{{id}}.jpg">Download Foto</a>
+          <p class="hint"><strong>Pengguna iPhone:</strong> tekan lama foto di atas, lalu pilih <strong>Simpan ke Foto</strong>.</p>
+        """);
+
+    public static string RenderSession(string mainId, IReadOnlyList<string> photoIds)
+    {
+        var items = string.Concat(photoIds.Select((id, i) => $$"""
+                <figure>
+                  <a href="/f/{{id}}"><img src="/f/{{id}}" alt="Foto {{i + 1}}" loading="lazy"></a>
+                  <a class="btn small" href="/d/{{id}}" download="natal-naposo-{{id}}.jpg">Download</a>
+                </figure>
+
+            """));
+        var others = photoIds.Count == 0 ? "" : $$"""
+              <h2>Semua foto ({{photoIds.Count}})</h2>
+              <p class="note">Foto asli tanpa bingkai. Sentuh foto untuk melihat ukuran penuh.</p>
+              <div class="grid">
+            {{items}}
+              </div>
+            """;
+        return Layout($$"""
+              <img class="photo" src="/f/{{mainId}}" alt="Foto Natal Remaja Naposo">
+              <a class="btn" href="/d/{{mainId}}" download="natal-naposo-{{mainId}}.jpg">Download Foto</a>
+              <p class="hint"><strong>Pengguna iPhone:</strong> tekan lama foto, lalu pilih <strong>Simpan ke Foto</strong>.</p>
+            {{others}}
+            """);
+    }
+
+    private static string Layout(string body) => $$"""
         <!doctype html>
         <html lang="id">
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="robots" content="noindex, nofollow">
-        <meta name="theme-color" content="#0f3d2a">
-        <title>Foto Natal Naposo HKBP Lontar</title>
+        <meta name="theme-color" content="#0c1612">
+        <title>Foto Natal Remaja Naposo · HKBP Lontar 2026</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap">
         <style>
-          :root { --red: #b3202a; --red-dark: #7a1219; --green: #0f3d2a; --gold: #d4a63a; --white: #fffaf2; }
+          :root {
+            --bg: #0c1612; --surface: #13211b; --line: rgba(244,241,234,.1);
+            --text: #f4f1ea; --muted: #a3aea8; --gold: #c9a45c;
+          }
           * { box-sizing: border-box; }
           body {
-            margin: 0; min-height: 100vh; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-            background: radial-gradient(circle at 50% 0%, #17533a, var(--green) 70%); color: var(--white);
-            display: flex; flex-direction: column; align-items: center; padding: 20px 16px 32px;
+            margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+            font-family: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            -webkit-font-smoothing: antialiased;
           }
-          header { text-align: center; margin-bottom: 16px; }
-          h1 { font-family: Georgia, "Times New Roman", serif; font-style: italic; color: var(--gold); margin: 0; font-size: 2rem; }
-          header p { margin: 4px 0 0; opacity: .85; letter-spacing: .04em; }
-          .photo {
-            width: 100%; max-width: 560px; border-radius: 12px; border: 3px solid var(--gold);
-            box-shadow: 0 10px 30px rgba(0,0,0,.35); background: #fff; display: block;
-            -webkit-touch-callout: default;
-          }
+          main { width: 100%; max-width: 560px; margin: 0 auto; padding: 32px 20px 40px; }
+          header { margin-bottom: 24px; }
+          .eyebrow { margin: 0; font-size: .75rem; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; color: var(--gold); }
+          h1 { margin: 6px 0 0; font-family: "Cormorant Garamond", Georgia, serif; font-weight: 500; font-size: 2.6rem; line-height: 1.05; }
+          h2 { margin: 40px 0 4px; font-size: 1.15rem; font-weight: 700; }
+          img { display: block; -webkit-touch-callout: default; }
+          .photo { width: 100%; border-radius: 12px; background: #fff; box-shadow: 0 16px 40px rgba(0,0,0,.4); }
           .btn {
-            display: block; width: 100%; max-width: 560px; margin-top: 20px; padding: 18px; border-radius: 999px;
-            background: var(--red); border: 2px solid var(--gold); color: var(--white); text-decoration: none;
-            text-align: center; font-size: 1.25rem; font-weight: 700;
+            display: block; width: 100%; margin-top: 16px; padding: 17px; border-radius: 14px;
+            background: var(--gold); color: #1a1408; text-decoration: none; text-align: center;
+            font-size: 1.05rem; font-weight: 700;
           }
-          .btn:active { background: var(--red-dark); }
-          .hint {
-            max-width: 560px; margin-top: 16px; padding: 14px 16px; border-radius: 12px;
-            background: rgba(255,255,255,.08); line-height: 1.5; font-size: .95rem;
+          .btn:active { opacity: .85; }
+          .btn.small {
+            margin-top: 8px; padding: 10px; border-radius: 10px; font-size: .9rem;
+            background: transparent; color: var(--text); border: 1px solid rgba(244,241,234,.22);
           }
-          footer { margin-top: 24px; font-size: .85rem; opacity: .7; text-align: center; }
+          .hint { margin: 14px 0 0; color: var(--muted); font-size: .9rem; line-height: 1.55; }
+          .hint strong { color: var(--text); font-weight: 600; }
+          .note { margin: 0 0 16px; color: var(--muted); font-size: .9rem; }
+          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+          figure { margin: 0; }
+          figure img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 10px; background: #000; }
+          footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: .85rem; text-align: center; }
         </style>
         </head>
         <body>
+        <main>
           <header>
-            <h1>Natal Naposo</h1>
-            <p>HKBP Lontar · 19 Desember 2026</p>
+            <p class="eyebrow">HKBP Lontar · 19 Desember 2026</p>
+            <h1>Natal Remaja Naposo</h1>
           </header>
-          <img class="photo" src="/f/{{id}}" alt="Foto Natal Naposo">
-          <a class="btn" href="/d/{{id}}" download="natal-naposo-{{id}}.jpg">Download Foto</a>
-          <p class="hint"><strong>Pengguna iPhone:</strong> tekan lama foto di atas, lalu pilih <strong>Simpan ke Foto</strong>.</p>
-          <footer>Selamat Natal! Tuhan memberkati.</footer>
+        {{body}}
+          <footer>Selamat Natal. Tuhan memberkati.</footer>
+        </main>
         </body>
         </html>
         """;

@@ -9,8 +9,8 @@
 
   <!-- Foto tamu dan konfigurasi runtime tidak ikut di-build atau di-publish. -->
   <ItemGroup>
-    <Content Remove="photos\**;data\**" />
-    <None Remove="photos\**;data\**" />
+    <Content Remove="photos\**;sessions\**;data\**" />
+    <None Remove="photos\**;sessions\**;data\**" />
   </ItemGroup>
 
 </Project>

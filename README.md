@@ -1,12 +1,17 @@
-# Photobox Natal Naposo HKBP Lontar
+# Photobox Natal Remaja Naposo HKBP Lontar 2026
 
 Panduan untuk operator photobox. Tidak perlu bisa memprogram, cukup ikuti langkah-langkahnya.
 
 ## Cara kerja singkat
 
-1. Tamu menyentuh layar, memilih bingkai, lalu berfoto (hitung mundur 3-2-1).
-2. Foto disusun ke dalam bingkai dan disimpan di laptop ini.
-3. Di layar muncul **kode QR**. Tamu memindainya dengan HP untuk melihat dan mendownload fotonya.
+1. Tamu melihat pilihan bingkai di layar awal, lalu menekan **Mulai Foto**.
+2. Muncul petunjuk bersiap selama 15 detik (bisa dilewati dengan tombol **Saya Siap!**).
+3. Diambil **8 foto**, masing-masing dengan hitungan mundur 5 detik.
+4. Tamu mengedit: memilih bingkai, memilih foto untuk tiap kotak, menggeser posisi foto, dan memilih filter.
+   Setelah 2 menit tanpa sentuhan, hasil disimpan otomatis.
+5. Foto berbingkai dan ke-8 foto asli disimpan di laptop ini.
+6. Di layar muncul **kode QR**. Tamu memindainya dengan HP untuk mendownload foto berbingkai
+   dan semua foto aslinya.
 
 Supaya HP tamu bisa membuka foto dari laptop ini, kita memakai fitur **Ports** di VS Code
 yang membuat alamat internet sementara. Karena itu **laptop harus tersambung ke internet**
@@ -60,15 +65,49 @@ Langkah ini dilakukan di **VS Code**:
 4. Pada kolom **Forwarded Address**, klik kanan → **Copy Local Address** (atau klik ikon salin).
    Alamatnya mirip seperti `https://abcd1234-3000.asse.devtunnels.ms`.
 
-> ⚠️ **Hanya port 3000 yang boleh di-forward.** Jangan pernah forward port **4000**
-> karena port itu adalah ruang kendali operator.
+> ⚠️ **Port 3000 = Public (untuk tamu). Port 4000 = ruang kendali operator.**
+> Port 4000 hanya boleh di-forward sebagai **Private** (lihat bagian 3a), **tidak pernah Public**.
+> Kalau port 4000 Public, siapa pun yang tahu alamatnya bisa melihat semua foto tamu dan mengganti link QR.
+
+---
+
+## 3a. Memakai tablet sebagai layar photobox (opsional)
+
+Kalau photobox dijalankan di tablet (bukan di laptop), laptop tetap menjadi server.
+
+**Di laptop (VS Code):**
+1. Di tab **Ports**, klik **Forward a Port**, ketik **`4000`**, tekan Enter.
+2. Pastikan kolom *Visibility* untuk port 4000 bertuliskan **Private**. Jangan diubah ke Public.
+3. Salin alamat port 4000, misalnya `https://abcd1234-4000.asse.devtunnels.ms`.
+   Kirim alamat ini ke tablet, misalnya lewat chat ke diri sendiri.
+
+**Di tablet:**
+1. Buka alamat port 4000 di **Chrome** (Android) atau **Safari** (iPad).
+2. Akan muncul halaman login. Masuk dengan **akun GitHub yang sama** dengan yang dipakai di VS Code.
+3. Izinkan akses kamera saat diminta.
+4. Supaya tampil layar penuh tanpa address bar, pakai menu browser **Tambahkan ke Layar Utama**
+   (*Add to Home Screen*), lalu buka photobox dari ikon tersebut.
+   Selain itu, aplikasi juga otomatis masuk layar penuh saat tamu menekan **Mulai Foto**.
+5. Di pengaturan tablet, atur layar **tidak pernah mati** dan matikan rotasi otomatis bila perlu.
+   (Aplikasi juga berusaha menjaga layar tetap menyala, tapi tidak semua tablet mendukung.)
+
+**Kamera di tablet:** aplikasi hanya bisa memakai kamera yang terbaca oleh browser tablet.
+Kamera DSLR harus mendukung mode **webcam USB (UVC)** dan tablet harus bisa membacanya.
+**Wajib dites sebelum hari-H.** Kalau DSLR tidak muncul di pilihan kamera, pakai kamera bawaan tablet,
+atau jalankan photobox di laptop seperti biasa.
+
+**Internet:** semua foto dikirim dari tablet ke laptop lewat internet (sekitar 3–6 MB per tamu).
+Pastikan sinyal di lokasi cukup kuat.
 
 ---
 
 ## 4. Menempel URL di pengaturan
 
-1. Di layar photobox, tekan **Ctrl + Shift + S** di keyboard laptop.
-   Panel **Pengaturan Operator** akan muncul (tamu tidak bisa melihat tombolnya).
+1. Buka **Pengaturan Operator**:
+   - di laptop: tekan **Ctrl + Shift + S**;
+   - di tablet: **tahan tulisan judul** di layar awal selama **3 detik**.
+
+   Tamu tidak bisa melihat tombolnya.
 2. Pada bagian **URL publik**, tempel alamat dari langkah 3 ke kotak isian, lalu tekan **Simpan**.
 3. Pastikan tulisan **Aktif:** sekarang menampilkan alamat tersebut.
 4. Tekan **Tutup** atau tombol **Esc**.
@@ -81,7 +120,7 @@ restart), tempel ulang alamat yang baru.
 ## 5. Mengganti kamera
 
 1. Colokkan kamera baru (misalnya kamera Pubdok).
-2. Tekan **Ctrl + Shift + S**.
+2. Buka **Pengaturan Operator** (Ctrl + Shift + S, atau tahan judul 3 detik di tablet).
 3. Pada bagian **Kamera**, pilih kamera yang diinginkan dari daftar.
 4. Kalau gambar tidak muncul, tekan **Muat Ulang Kamera**.
 
@@ -92,9 +131,9 @@ otomatis kembali memakainya.
 
 ## 6. Tamu terlambat memindai QR
 
-1. Tekan **Ctrl + Shift + S**.
-2. Di bagian **Galeri**, sentuh foto tamu tersebut.
-3. Kode QR-nya akan tampil lagi. Minta tamu memindainya.
+1. Buka **Pengaturan Operator** (Ctrl + Shift + S, atau tahan judul 3 detik di tablet).
+2. Di bagian **Galeri sesi**, sentuh foto tamu tersebut (urutan terbaru di atas).
+3. Kode QR sesinya akan tampil lagi. Minta tamu memindainya.
 
 ---
 
@@ -121,7 +160,7 @@ Setiap template terdiri dari **dua file** di folder `web/public/templates/`:
    ```
 
    - `slots` adalah daftar lubang foto. `x`, `y` = posisi pojok kiri atas, `w`, `h` = lebar dan tinggi (dalam piksel).
-   - Jumlah foto per sesi = jumlah `slots`.
+   - Jumlah `slots` maksimal 8, karena satu sesi mengambil 8 foto.
    - Minta tim desain mencatat koordinat lubang-lubang ini.
 
 Lalu:
@@ -165,7 +204,8 @@ Lalu:
 | HP tamu menampilkan halaman peringatan "developer tunnel" | Itu normal dari VS Code. Minta tamu menekan **Continue**. |
 | Aplikasi menampilkan "Terjadi kesalahan" | Sentuh **Muat Ulang**. |
 
-Semua foto tersimpan di folder **`server/photos`**. Salin folder ini ke flashdisk setelah acara sebagai cadangan.
+Semua foto tersimpan di folder **`server/photos`**, dan data pengelompokan per tamu ada di
+**`server/sessions`**. Salin kedua folder ini ke flashdisk setelah acara sebagai cadangan.
 
 ---
 
@@ -185,11 +225,13 @@ Semua foto tersimpan di folder **`server/photos`**. Salin folder ini ke flashdis
 - [ ] `start.ps1` sudah dijalankan. Jendela PowerShell server terbuka dan tidak ditutup.
 - [ ] Port 3000 sudah di-forward dan **Public**.
 - [ ] URL publik sudah ditempel di Ctrl+Shift+S, dan tulisan **Aktif** menampilkan alamat yang benar.
+- [ ] Jika memakai tablet: port 4000 di-forward sebagai **Private** (bukan Public), tablet sudah login GitHub,
+      kamera DSLR terbaca di pilihan kamera, dan layar tablet diatur tidak pernah mati.
 - [ ] Tes satu foto dan pindai QR-nya dengan HP. Fotonya terbuka dan bisa didownload.
 - [ ] Notifikasi Windows dimatikan (Focus Assist / Do not disturb) agar tidak muncul di layar.
 - [ ] Pencahayaan di area foto cukup terang.
 
 **Setelah acara**
-- [ ] Salin folder `server/photos` ke flashdisk/cadangan.
+- [ ] Salin folder `server/photos` dan `server/sessions` ke flashdisk/cadangan.
 - [ ] Biarkan server dan port tetap menyala beberapa hari jika tamu masih perlu mendownload,
       atau umumkan batas waktu download.

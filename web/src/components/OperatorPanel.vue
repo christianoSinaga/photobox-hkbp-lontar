@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { ApiError, getConfig, putConfig, listPhotos, publicPageUrl } from '../lib/api.js'
+import { ApiError, getConfig, putConfig, listSessions, publicSessionUrl } from '../lib/api.js'
 import { makeQr } from '../lib/qr.js'
 
 defineProps({
@@ -35,7 +35,7 @@ async function loadConfig() {
 async function loadPhotos() {
   photosLoading.value = true
   try {
-    photos.value = await listPhotos()
+    photos.value = await listSessions()
   } finally {
     photosLoading.value = false
   }
@@ -72,7 +72,7 @@ async function saveConfig(value) {
 async function openPhoto(p) {
   selected.value = p
   selectedQr.value = ''
-  const url = publicPageUrl(baseUrl.value, p.id)
+  const url = publicSessionUrl(baseUrl.value, p.id)
   if (url) selectedQr.value = await makeQr(url)
 }
 
@@ -87,7 +87,7 @@ onMounted(refresh)
     <div class="panel">
       <header>
         <h2>Pengaturan Operator</h2>
-        <span class="shortcut">Ctrl+Shift+S / Esc untuk menutup</span>
+        <span class="shortcut">Buka: Ctrl+Shift+S atau tahan judul 3 detik · Tutup: Esc</span>
         <button class="btn ghost" @click="emit('close')">Tutup</button>
       </header>
 
@@ -139,28 +139,28 @@ onMounted(refresh)
 
         <section class="gallery-section">
           <div class="row">
-            <h3>Galeri ({{ photos.length }})</h3>
+            <h3>Galeri sesi ({{ photos.length }})</h3>
             <button class="btn ghost small" :disabled="photosLoading" @click="refresh">Muat ulang</button>
           </div>
           <p class="hint">Sentuh foto untuk menampilkan ulang kode QR-nya.</p>
           <div class="gallery">
             <button v-for="p in photos" :key="p.id" class="thumb" @click="openPhoto(p)">
-              <img :src="`/f/${p.id}`" loading="lazy" alt="" />
+              <img :src="`/f/${p.main}`" loading="lazy" alt="" />
               <span>{{ formatTime(p.createdAt) }}</span>
             </button>
-            <p v-if="!photos.length && !photosLoading && !serverError" class="hint">Belum ada foto.</p>
+            <p v-if="!photos.length && !photosLoading && !serverError" class="hint">Belum ada sesi foto.</p>
           </div>
         </section>
       </div>
 
       <div v-if="selected" class="detail" @click.self="selected = null">
         <div class="detail-card">
-          <img class="detail-photo" :src="`/f/${selected.id}`" alt="" />
+          <img class="detail-photo" :src="`/f/${selected.main}`" alt="" />
           <div class="detail-side">
             <template v-if="selectedQr">
               <h3>Scan untuk download</h3>
               <img class="qr" :src="selectedQr" alt="Kode QR" />
-              <p class="mono">{{ publicPageUrl(baseUrl, selected.id) }}</p>
+              <p class="mono">{{ publicSessionUrl(baseUrl, selected.id) }}</p>
             </template>
             <p v-else class="hint warn">Atur URL publik dulu untuk menampilkan QR.</p>
             <button class="btn" @click="selected = null">Kembali</button>
@@ -179,7 +179,8 @@ onMounted(refresh)
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
   user-select: text;
   -webkit-user-select: text;
 }
@@ -191,8 +192,8 @@ onMounted(refresh)
   display: flex;
   flex-direction: column;
   border-radius: 20px;
-  border: 3px solid var(--gold);
-  background: var(--green);
+  border: 1px solid var(--line);
+  background: var(--bg);
   box-shadow: var(--shadow);
   overflow: hidden;
 }
@@ -201,25 +202,30 @@ header {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 14px 24px;
-  background: var(--red-dark);
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--line);
 }
 
 h2 {
   margin: 0;
   flex: 1;
-  font-family: var(--serif);
-  color: var(--gold);
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .shortcut {
-  opacity: 0.7;
+  color: var(--text-muted);
   font-size: 0.9rem;
 }
 
 h3 {
-  margin: 0 0 8px;
-  color: var(--gold-light);
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 .body {
@@ -227,45 +233,47 @@ h3 {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 18px 24px;
+  gap: 26px;
+  padding: 24px 28px;
 }
 
 .btn {
-  min-height: 52px;
+  min-height: 50px;
   padding: 0 22px;
-  font-size: 1.05rem;
-  box-shadow: none;
+  font-size: 1rem;
   white-space: nowrap;
-}
-
-.btn:disabled {
-  opacity: 0.5;
 }
 
 .btn.small {
   min-height: 40px;
-  font-size: 0.95rem;
+  padding: 0 16px;
+  font-size: 0.9rem;
 }
 
 select,
 input {
   flex: 1;
   min-width: 0;
-  min-height: 52px;
+  min-height: 50px;
   padding: 0 16px;
   border-radius: 12px;
-  border: 2px solid rgba(212, 166, 58, 0.6);
-  background: rgba(255, 255, 255, 0.95);
-  color: #1b1b1b;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
   font: inherit;
-  font-size: 1.1rem;
+  font-size: 1rem;
+}
+
+select:focus,
+input:focus {
+  outline: none;
+  border-color: var(--gold);
 }
 
 .row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .row h3 {
@@ -280,24 +288,28 @@ input {
   gap: 16px;
   padding: 10px 10px 10px 18px;
   border-radius: 12px;
-  background: var(--red);
-  border: 2px solid var(--gold);
+  background: rgba(163, 58, 55, 0.18);
+  border: 1px solid rgba(163, 58, 55, 0.5);
 }
 
 .active {
   margin: 0 0 8px;
-  font-size: 1.1rem;
+  font-size: 1.05rem;
 }
 
 .hint {
   margin: 0 0 8px;
-  opacity: 0.85;
-  line-height: 1.5;
+  color: var(--text-muted);
+  line-height: 1.55;
+  font-size: 0.95rem;
+}
+
+.hint b {
+  color: var(--text);
 }
 
 .warn {
-  color: #ffb4a8;
-  opacity: 1;
+  color: #e3928c;
 }
 
 .gallery-section {
@@ -313,7 +325,7 @@ input {
   min-height: 0;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
   gap: 12px;
   align-content: start;
 }
@@ -323,10 +335,11 @@ input {
   flex-direction: column;
   gap: 6px;
   padding: 6px;
-  border-radius: 10px;
-  border: 2px solid transparent;
-  background: rgba(255, 255, 255, 0.06);
-  font-size: 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.8rem;
 }
 
 .thumb:active {
@@ -338,7 +351,7 @@ input {
   aspect-ratio: 2 / 3;
   object-fit: contain;
   background: #000;
-  border-radius: 6px;
+  border-radius: 8px;
 }
 
 .detail {
@@ -347,12 +360,12 @@ input {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.8);
+  background: rgba(12, 22, 18, 0.96);
 }
 
 .detail-card {
   display: flex;
-  gap: 32px;
+  gap: 40px;
   align-items: center;
   max-height: 86vh;
   padding: 24px;
@@ -361,29 +374,88 @@ input {
 .detail-photo {
   max-height: 80vh;
   max-width: 45vw;
-  border: 3px solid var(--gold);
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
 .detail-side {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
   max-width: 400px;
   text-align: center;
 }
 
+.detail-side h3 {
+  margin: 0;
+}
+
 .qr {
-  width: 340px;
-  padding: 12px;
+  width: 320px;
+  padding: 14px;
   background: #fff;
-  border-radius: 12px;
+  border-radius: 16px;
 }
 
 .mono {
   margin: 0;
   font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.9rem;
   word-break: break-all;
+  color: var(--text-muted);
+}
+
+.active .mono {
+  color: var(--text);
+  font-size: 1rem;
+}
+
+@media (max-width: 900px), (max-aspect-ratio: 1/1) {
+  .panel {
+    width: 96vw;
+    height: 94vh;
+  }
+
+  header {
+    padding: 14px 18px;
+  }
+
+  .shortcut {
+    display: none;
+  }
+
+  .body {
+    padding: 18px;
+    gap: 20px;
+    overflow-y: auto;
+  }
+
+  form.row {
+    flex-wrap: wrap;
+  }
+
+  form.row input {
+    flex-basis: 100%;
+  }
+
+  .gallery-section {
+    min-height: 40vh;
+  }
+
+  .detail-card {
+    flex-direction: column;
+    gap: 20px;
+    max-height: 92vh;
+    overflow-y: auto;
+  }
+
+  .detail-photo {
+    max-width: 80vw;
+    max-height: 40vh;
+  }
+
+  .qr {
+    width: min(260px, 60vw);
+  }
 }
 </style>

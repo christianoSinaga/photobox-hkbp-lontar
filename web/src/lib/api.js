@@ -41,7 +41,19 @@ export const uploadPhoto = (blob) =>
     body: blob,
   })
 
+/** Kelompokkan foto template (main) + foto mentah ke satu sesi. Respons: { id, url }. */
+export const createSession = (main, photos) =>
+  request('/api/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ main, photos }),
+  })
+
+export const listSessions = () => request('/api/sessions')
+
 export const publicPageUrl = (baseUrl, id) => (baseUrl ? `${baseUrl}/p/${id}` : null)
+
+export const publicSessionUrl = (baseUrl, id) => (baseUrl ? `${baseUrl}/s/${id}` : null)
 
 export function uploadErrorMessage(e) {
   if (e instanceof ApiError && e.serverDown)
