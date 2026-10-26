@@ -1,4 +1,4 @@
-import { ref, shallowRef, onMounted, onBeforeUnmount } from 'vue'
+import { ref, shallowRef, watch, onMounted, onBeforeUnmount } from 'vue'
 
 const STORAGE_KEY = 'photobox.cameraId'
 
@@ -21,14 +21,16 @@ function savePreferred(id) {
 function describeError(e) {
   switch (e?.name) {
     case 'NotAllowedError':
-      return 'Akses kamera ditolak. Izinkan kamera di browser.'
+    case 'SecurityError':
+      return 'Izin kamera ditolak. Minta operator mengizinkan kamera di browser.'
     case 'NotFoundError':
     case 'OverconstrainedError':
-      return 'Kamera tidak ditemukan.'
+      return 'Kamera tidak terdeteksi. Pastikan kamera sudah tercolok.'
     case 'NotReadableError':
-      return 'Kamera sedang dipakai aplikasi lain.'
+    case 'AbortError':
+      return 'Kamera sedang dipakai aplikasi lain. Tutup aplikasi tersebut, lalu coba lagi.'
     default:
-      return `Kamera gagal dibuka${e?.message ? `: ${e.message}` : '.'}`
+      return 'Kamera gagal dibuka. Coba lagi.'
   }
 }
 
@@ -40,25 +42,37 @@ function openStream(deviceId) {
 
 /**
  * Kamera dengan pilihan perangkat yang diingat di localStorage.
+ * Pasang `videoEl` ke elemen <video> (ref="videoEl"); stream dipasang otomatis.
  * Jika kamera pilihan (mis. kamera Pubdok) belum tercolok, pakai kamera lain dulu,
  * lalu otomatis pindah begitu kamera pilihan muncul.
  */
 export function useCamera() {
+  const videoEl = ref(null)
   const stream = shallowRef(null)
   const devices = ref([])
   const deviceId = ref('')
   const error = ref('')
+  const starting = ref(false)
   let preferredId = readPreferred()
   let attempt = 0
 
+  watch([stream, videoEl], ([s, el]) => {
+    if (el && el.srcObject !== s) el.srcObject = s
+  })
+
   async function refreshDevices() {
-    const all = await navigator.mediaDevices.enumerateDevices()
-    devices.value = all
-      .filter((d) => d.kind === 'videoinput')
-      .map((d, i) => ({ id: d.deviceId, label: d.label || `Kamera ${i + 1}` }))
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices()
+      devices.value = all
+        .filter((d) => d.kind === 'videoinput')
+        .map((d, i) => ({ id: d.deviceId, label: d.label || `Kamera ${i + 1}` }))
+    } catch {
+      devices.value = []
+    }
   }
 
   function stop() {
+    attempt++
     stream.value?.getTracks().forEach((t) => t.stop())
     stream.value = null
   }
@@ -68,9 +82,10 @@ export function useCamera() {
       error.value = 'Browser ini tidak mendukung kamera.'
       return
     }
-    const current = ++attempt
     stop()
+    const current = attempt
     error.value = ''
+    starting.value = true
     try {
       let s
       try {
@@ -87,14 +102,17 @@ export function useCamera() {
       track.addEventListener('ended', () => {
         if (stream.value === s) {
           stream.value = null
-          error.value = 'Kamera terputus.'
+          error.value = 'Kamera terputus. Periksa kabel kamera, lalu coba lagi.'
         }
       })
       stream.value = s
       deviceId.value = track.getSettings().deviceId || ''
-      await refreshDevices()
     } catch (e) {
+      console.error(e)
       if (current === attempt) error.value = describeError(e)
+    } finally {
+      if (current === attempt) starting.value = false
+      await refreshDevices()
     }
   }
 
@@ -104,9 +122,21 @@ export function useCamera() {
     return start(id)
   }
 
+  /** Ambil frame saat ini ke canvas pada resolusi asli kamera. Tidak di-mirror. */
+  function grab() {
+    const video = videoEl.value
+    if (!stream.value || !video || !video.videoWidth) return null
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    canvas.getContext('2d').drawImage(video, 0, 0)
+    return canvas
+  }
+
   async function onDeviceChange() {
     await refreshDevices()
     const preferredPresent = preferredId && devices.value.some((d) => d.id === preferredId)
+    if (starting.value) return
     if (!stream.value || (preferredPresent && deviceId.value !== preferredId)) start()
   }
 
@@ -116,5 +146,5 @@ export function useCamera() {
     stop()
   })
 
-  return { stream, devices, deviceId, error, start, select }
+  return { videoEl, stream, devices, deviceId, error, starting, start, stop, select, grab }
 }

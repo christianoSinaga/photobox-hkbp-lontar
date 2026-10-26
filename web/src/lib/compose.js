@@ -1,15 +1,5 @@
-/** Ambil satu frame dari video pada resolusi aslinya. Tidak di-mirror. */
-export function grabFrame(video) {
-  if (!video || !video.videoWidth) return null
-  const canvas = document.createElement('canvas')
-  canvas.width = video.videoWidth
-  canvas.height = video.videoHeight
-  canvas.getContext('2d').drawImage(video, 0, 0)
-  return canvas
-}
-
 /** Gambar src ke kotak tujuan dengan crop tengah (setara object-fit: cover). */
-function drawCover(ctx, src, x, y, w, h) {
+export function drawCover(ctx, src, x, y, w, h) {
   const scale = Math.max(w / src.width, h / src.height)
   const cropW = w / scale
   const cropH = h / scale
@@ -18,8 +8,17 @@ function drawCover(ctx, src, x, y, w, h) {
   ctx.drawImage(src, cropX, cropY, cropW, cropH, x, y, w, h)
 }
 
+/** Thumbnail kecil dengan crop yang sama seperti hasil akhir di slot. */
+export function makeThumb(shot, slot, width = 240) {
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = Math.round((width * slot.h) / slot.w)
+  drawCover(canvas.getContext('2d'), shot, 0, 0, canvas.width, canvas.height)
+  return canvas.toDataURL('image/jpeg', 0.7)
+}
+
 /** Susun foto ke slot template, lalu frame PNG di atasnya. Hasil: Blob JPEG kualitas 0.92. */
-export function composeTemplate(template, shots) {
+export function compose(template, shots) {
   const canvas = document.createElement('canvas')
   canvas.width = template.width
   canvas.height = template.height

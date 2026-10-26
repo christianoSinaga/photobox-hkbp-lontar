@@ -17,9 +17,15 @@ builder.WebHost.ConfigureKestrel(kestrel =>
 
 var app = builder.Build();
 
-var photosDir = Path.Combine(app.Environment.ContentRootPath, "photos");
+// Folder induk untuk photos/ dan data/. Default: folder proyek server (saat `dotnet run`).
+// Skrip start memberi --StorageDir agar versi publish tetap menyimpan ke server/photos.
+var storageDir = builder.Configuration["StorageDir"] is { Length: > 0 } dir
+    ? Path.GetFullPath(dir)
+    : app.Environment.ContentRootPath;
+var photosDir = Path.Combine(storageDir, "photos");
 Directory.CreateDirectory(photosDir);
-var config = new ConfigStore(Path.Combine(app.Environment.ContentRootPath, "data", "config.json"));
+var config = new ConfigStore(Path.Combine(storageDir, "data", "config.json"));
+app.Logger.LogInformation("Foto disimpan di {PhotosDir}", photosDir);
 
 var idRegex = new Regex("^[a-f0-9]{16}$", RegexOptions.CultureInvariant);
 // \z, bukan $, supaya path yang diakhiri newline tidak lolos.

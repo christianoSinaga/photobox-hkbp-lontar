@@ -1,0 +1,13 @@
+{
+  "id": "natal-strip-4",
+  "name": "Natal Naposo Strip",
+  "frame": "/templates/natal-strip-4.png",
+  "width": 600,
+  "height": 1800,
+  "slots": [
+    { "x": 40, "y": 40, "w": 520, "h": 342 },
+    { "x": 40, "y": 402, "w": 520, "h": 342 },
+    { "x": 40, "y": 764, "w": 520, "h": 342 },
+    { "x": 40, "y": 1126, "w": 520, "h": 342 }
+  ]
+}

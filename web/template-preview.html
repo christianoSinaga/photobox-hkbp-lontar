@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Template Preview (dev)</title>
+    <style>
+      body { margin: 0; padding: 24px; background: #1d1f22; color: #eee; font-family: system-ui, sans-serif; }
+      h1 { margin: 0 0 4px; }
+      .intro { margin: 0 0 20px; opacity: .8; max-width: 900px; line-height: 1.5; }
+      .controls { display: flex; gap: 20px; margin-bottom: 24px; flex-wrap: wrap; }
+      .tpl { display: flex; gap: 24px; margin-bottom: 40px; padding: 20px; border-radius: 12px; background: #2a2d31; flex-wrap: wrap; }
+      canvas { max-height: 80vh; max-width: 100%; background: #555; border: 1px solid #444; }
+      .info { flex: 1; min-width: 320px; }
+      .info h2 { margin: 0 0 4px; }
+      .path { font-family: Consolas, monospace; opacity: .7; margin: 0 0 12px; }
+      table { border-collapse: collapse; font-family: Consolas, monospace; font-size: 14px; }
+      td, th { padding: 4px 10px; border-bottom: 1px solid #444; text-align: right; }
+      th:first-child, td:first-child { text-align: left; }
+      .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+      .ok { color: #7fd17f; }
+      .bad { color: #ff8a80; }
+      ul { padding-left: 20px; }
+    </style>
+  </head>
+  <body>
+    <h1>Template Preview</h1>
+    <p class="intro">
+      Halaman bantu development untuk mengecek koordinat slot dari tim desain. Kotak berwarna = posisi
+      slot menurut JSON. Template dibaca dari <code>/templates/index.json</code>, atau satu template lewat
+      <code>?t=/templates/nama.json</code>.
+    </p>
+    <div class="controls">
+      <label><input type="checkbox" id="showFrame" checked /> Tampilkan frame</label>
+      <label><input type="checkbox" id="frameOnTop" checked /> Frame di atas kotak</label>
+    </div>
+    <div id="list"></div>
+    <script type="module" src="/src/dev/template-preview.js"></script>
+  </body>
+</html>
