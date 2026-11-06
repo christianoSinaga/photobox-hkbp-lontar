@@ -1,7 +1,10 @@
 <script setup>
 import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import { CENTER, drawComposition, panOffset } from '../lib/compose.js'
+import { DEFAULT_TRANSFORM, MIN_ZOOM, MAX_ZOOM, drawComposition, panTransform } from '../lib/compose.js'
 import { FILTERS, filterCss } from '../lib/filters.js'
+import TimerBadge from './TimerBadge.vue'
+
+const ZOOM_STEP = 0.25
 
 const props = defineProps({
   templates: { type: Array, required: true },
@@ -10,12 +13,15 @@ const props = defineProps({
   shots: { type: Array, required: true },
   /** Thumbnail data URL, urutannya sama dengan shots. */
   thumbs: { type: Array, required: true },
+  /** Sisa waktu edit (detik); waktu habis ditangani oleh induk lewat finish(). */
+  secondsLeft: { type: Number, default: 0 },
+  secondsTotal: { type: Number, default: 0 },
 })
 const emit = defineEmits(['save'])
 
 const template = shallowRef(props.templates.find((t) => t.id === props.initialTemplateId) ?? props.templates[0])
 const assignment = ref([]) // assignment[slot] = indeks foto
-const offsets = ref([])
+const transforms = ref([]) // transforms[slot] = posisi, zoom, dan arah balik foto di slot itu
 const activeSlot = ref(0)
 const filterId = ref('normal')
 const tab = ref('foto')
@@ -50,7 +56,7 @@ function applyTemplate(t, previous = []) {
   }
   template.value = t
   assignment.value = next
-  offsets.value = t.slots.map(() => ({ ...CENTER }))
+  transforms.value = t.slots.map(() => ({ ...DEFAULT_TRANSFORM }))
   activeSlot.value = 0
 }
 
@@ -65,16 +71,31 @@ function pickPhoto(index) {
   const other = next.indexOf(index)
   if (other !== -1 && other !== slot) {
     next[other] = next[slot]
-    offsets.value[other] = { ...CENTER }
+    transforms.value[other] = { ...DEFAULT_TRANSFORM }
   }
   next[slot] = index
-  offsets.value[slot] = { ...CENTER }
+  transforms.value[slot] = { ...DEFAULT_TRANSFORM }
   assignment.value = next
   activeSlot.value = (slot + 1) % next.length
 }
 
 const slotsUsing = (index) =>
   assignment.value.flatMap((p, slot) => (p === index ? [slot + 1] : []))
+
+// ---------- Edit per foto (slot aktif) ----------
+
+const activeTransform = computed(() => transforms.value[activeSlot.value] ?? DEFAULT_TRANSFORM)
+
+function updateActive(change) {
+  const i = activeSlot.value
+  transforms.value[i] = { ...transforms.value[i], ...change }
+}
+
+const flipHorizontal = () => updateActive({ flipX: !activeTransform.value.flipX })
+const flipVertical = () => updateActive({ flipY: !activeTransform.value.flipY })
+const zoomIn = () => updateActive({ zoom: Math.min(MAX_ZOOM, activeTransform.value.zoom + ZOOM_STEP) })
+const zoomOut = () => updateActive({ zoom: Math.max(MIN_ZOOM, activeTransform.value.zoom - ZOOM_STEP) })
+const resetActive = () => updateActive({ ...DEFAULT_TRANSFORM })
 
 // ---------- Preview canvas ----------
 
@@ -92,7 +113,7 @@ function render() {
   const scale = canvas.width / t.width
   ctx.setTransform(scale, 0, 0, scale, 0, 0)
   drawComposition(ctx, t, slotShots.value, {
-    offsets: offsets.value,
+    transforms: transforms.value,
     filter: filterCss(filterId.value),
     placeholder: true,
   })
@@ -120,7 +141,7 @@ function resize() {
 }
 
 watch(template, () => requestAnimationFrame(resize))
-watch([assignment, offsets, activeSlot, filterId], scheduleRender, { deep: true })
+watch([assignment, transforms, activeSlot, filterId], scheduleRender, { deep: true })
 
 // ---------- Sentuh & geser ----------
 
@@ -151,7 +172,7 @@ function onPointerMove(e) {
   const shot = slotShots.value[drag.slot]
   if (shot) {
     const slot = template.value.slots[drag.slot]
-    offsets.value[drag.slot] = panOffset(shot, slot, offsets.value[drag.slot], p.x - drag.last.x, p.y - drag.last.y)
+    transforms.value[drag.slot] = panTransform(shot, slot, transforms.value[drag.slot], p.x - drag.last.x, p.y - drag.last.y)
   }
   drag.last = p
 }
@@ -165,7 +186,7 @@ function finish() {
   emit('save', {
     template: template.value,
     assignment: [...assignment.value],
-    offsets: offsets.value.map((o) => ({ ...o })),
+    transforms: transforms.value.map((t) => ({ ...t })),
     filter: filterCss(filterId.value),
   })
 }
@@ -187,21 +208,47 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="editor">
-    <div ref="stageEl" class="stage">
-      <canvas
-        ref="canvasEl"
-        :style="{ width: `${canvasSize.width}px`, height: `${canvasSize.height}px` }"
-        @pointerdown="onPointerDown"
-        @pointermove="onPointerMove"
-        @pointerup="onPointerUp"
-        @pointercancel="onPointerUp"
-      ></canvas>
+    <div class="stage-col">
+      <div ref="stageEl" class="stage">
+        <canvas
+          ref="canvasEl"
+          :style="{ width: `${canvasSize.width}px`, height: `${canvasSize.height}px` }"
+          @pointerdown="onPointerDown"
+          @pointermove="onPointerMove"
+          @pointerup="onPointerUp"
+          @pointercancel="onPointerUp"
+        ></canvas>
+      </div>
+
+      <!-- Edit untuk foto di kotak yang sedang aktif -->
+      <div class="toolbar" aria-label="Edit foto di kotak aktif">
+        <span class="slot-label">Kotak {{ activeSlot + 1 }}</span>
+        <button :class="{ on: activeTransform.flipX }" @click="flipHorizontal">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M8 7l-5 5 5 5M16 7l5 5-5 5" /></svg>
+          Balik ↔
+        </button>
+        <button :class="{ on: activeTransform.flipY }" @click="flipVertical">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18M7 8l5-5 5 5M7 16l5 5 5-5" /></svg>
+          Balik ↕
+        </button>
+        <button :disabled="activeTransform.zoom <= MIN_ZOOM" aria-label="Perkecil" @click="zoomOut">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M8 11h6M16.5 16.5L21 21" /></svg>
+        </button>
+        <span class="zoom">{{ Math.round(activeTransform.zoom * 100) }}%</span>
+        <button :disabled="activeTransform.zoom >= MAX_ZOOM" aria-label="Perbesar" @click="zoomIn">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M8 11h6M11 8v6M16.5 16.5L21 21" /></svg>
+        </button>
+        <button class="reset" @click="resetActive">Reset</button>
+      </div>
     </div>
 
     <div class="panel">
       <div class="heading">
-        <p class="eyebrow">Edit foto</p>
-        <h2 class="title">Atur hasil fotomu</h2>
+        <div>
+          <p class="eyebrow">Edit foto</p>
+          <h2 class="title">Atur hasil fotomu</h2>
+        </div>
+        <TimerBadge v-if="secondsTotal" :left="secondsLeft" :total="secondsTotal" label="Waktu edit" />
       </div>
 
       <div class="tabs" role="tablist">
@@ -230,7 +277,7 @@ onBeforeUnmount(() => {
         <template v-else-if="tab === 'foto'">
           <p class="hint">
             Sentuh kotak di bingkai (sekarang <b>kotak {{ activeSlot + 1 }}</b>), lalu pilih fotonya.
-            Geser foto di bingkai untuk mengatur posisi.
+            Geser foto di bingkai untuk mengatur posisi, dan pakai tombol di bawah bingkai untuk membalik atau memperbesar.
           </p>
           <div class="grid photos">
             <button
@@ -277,12 +324,93 @@ onBeforeUnmount(() => {
   padding: 4vh 4vw;
 }
 
+.stage-col {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .stage {
+  flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  align-self: center;
+}
+
+.toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  min-width: 52px;
+  padding: 0 14px;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  font-size: 1rem;
+  font-weight: 600;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.toolbar button:active {
+  background: var(--surface-2);
+}
+
+.toolbar button.on {
+  border-color: var(--gold);
+  background: var(--gold-soft);
+}
+
+.toolbar button:disabled {
+  opacity: 0.35;
+}
+
+.toolbar svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.slot-label {
+  padding: 0 12px 0 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+
+.zoom {
+  min-width: 52px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.toolbar .reset {
+  color: var(--text-muted);
 }
 
 canvas {
@@ -298,6 +426,13 @@ canvas {
   display: flex;
   flex-direction: column;
   gap: 22px;
+}
+
+.heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .panel .title {
@@ -440,8 +575,18 @@ canvas {
     padding: 3vh 5vw;
   }
 
-  .heading {
+  /* Judul disembunyikan supaya hemat tempat, tapi timer tetap terlihat. */
+  .heading > div {
     display: none;
+  }
+
+  .heading {
+    justify-content: flex-end;
+  }
+
+  .toolbar button {
+    min-height: 46px;
+    padding: 0 10px;
   }
 
   .panel {

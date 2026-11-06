@@ -56,6 +56,8 @@ export const publicPageUrl = (baseUrl, id) => (baseUrl ? `${baseUrl}/p/${id}` : 
 export const publicSessionUrl = (baseUrl, id) => (baseUrl ? `${baseUrl}/s/${id}` : null)
 
 export function uploadErrorMessage(e) {
+  if (e instanceof ApiError && e.status === 408)
+    return 'Koneksi ke server terlalu lambat. Periksa internet, lalu coba lagi.'
   if (e instanceof ApiError && e.serverDown)
     return 'Server tidak bisa dihubungi. Minta operator memeriksa server, lalu coba lagi.'
   return 'Foto gagal disimpan. Silakan coba lagi.'

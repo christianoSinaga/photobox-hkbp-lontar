@@ -7,10 +7,11 @@ Panduan untuk operator photobox. Tidak perlu bisa memprogram, cukup ikuti langka
 1. Tamu melihat pilihan bingkai di layar awal, lalu menekan **Mulai Foto**.
 2. Muncul petunjuk bersiap selama 15 detik (bisa dilewati dengan tombol **Saya Siap!**).
 3. Diambil **8 foto**, masing-masing dengan hitungan mundur 5 detik.
-4. Tamu mengedit: memilih bingkai, memilih foto untuk tiap kotak, menggeser posisi foto, dan memilih filter.
-   Setelah 2 menit tanpa sentuhan, hasil disimpan otomatis.
-5. Foto berbingkai dan ke-8 foto asli disimpan di laptop ini.
-6. Di layar muncul **kode QR**. Tamu memindainya dengan HP untuk mendownload foto berbingkai
+4. Tamu boleh **mengulang maksimal 3 foto** (sekali saja). Ada waktu 20 detik untuk memilih.
+5. Tamu mengedit selama **30 detik**: memilih bingkai, memilih foto untuk tiap kotak, menggeser,
+   membalik, memperbesar/memperkecil foto, dan memilih filter. Waktu habis = hasil otomatis disimpan.
+6. Foto berbingkai dan ke-8 foto asli disimpan di laptop ini, dalam **satu folder per tamu**.
+7. Di layar muncul **kode QR**. Tamu memindainya dengan HP untuk mendownload foto berbingkai
    dan semua foto aslinya.
 
 Supaya HP tamu bisa membuka foto dari laptop ini, kita memakai fitur **Ports** di VS Code
@@ -204,8 +205,11 @@ Lalu:
 | HP tamu menampilkan halaman peringatan "developer tunnel" | Itu normal dari VS Code. Minta tamu menekan **Continue**. |
 | Aplikasi menampilkan "Terjadi kesalahan" | Sentuh **Muat Ulang**. |
 
-Semua foto tersimpan di folder **`server/photos`**, dan data pengelompokan per tamu ada di
-**`server/sessions`**. Salin kedua folder ini ke flashdisk setelah acara sebagai cadangan.
+Foto setiap tamu tersimpan di folder sendiri di dalam **`server/sessions`**, dengan nama berawalan
+tanggal dan jam, misalnya `2026-12-19_19-05-33_3f9a…`. Isinya `bingkai.jpg` (foto berbingkai),
+`foto-01.jpg` sampai `foto-08.jpg` (foto asli), dan `session.json` (jangan dihapus atau diubah).
+Folder **`server/photos`** hanya berisi foto yang belum selesai disimpan (misalnya tamu membatalkan di tengah jalan).
+Salin kedua folder ini ke flashdisk setelah acara sebagai cadangan.
 
 ---
 

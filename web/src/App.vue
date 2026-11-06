@@ -1,23 +1,38 @@
 <script setup>
-import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import { useCamera } from './composables/useCamera.js'
-import { loadTemplates } from './lib/templates.js'
-import { compose, canvasToJpeg, downscale, toDataUrl } from './lib/compose.js'
-import { getConfig, uploadPhoto, createSession, uploadErrorMessage } from './lib/api.js'
-import { makeQr } from './lib/qr.js'
-import { fatalError } from './lib/fatal.js'
-import { EVENT } from './lib/event.js'
-import EditorScreen from './components/EditorScreen.vue'
-import OperatorPanel from './components/OperatorPanel.vue'
+import {
+  ref,
+  shallowRef,
+  computed,
+  watch,
+  onMounted,
+  onBeforeUnmount,
+} from "vue";
+import { useCamera } from "./composables/useCamera.js";
+import { loadTemplates } from "./lib/templates.js";
+import { compose, canvasToJpeg, downscale, toDataUrl } from "./lib/compose.js";
+import {
+  getConfig,
+  uploadPhoto,
+  createSession,
+  uploadErrorMessage,
+} from "./lib/api.js";
+import { makeQr } from "./lib/qr.js";
+import { fatalError } from "./lib/fatal.js";
+import { EVENT } from "./lib/event.js";
+import EditorScreen from "./components/EditorScreen.vue";
+import TimerBadge from "./components/TimerBadge.vue";
+import OperatorPanel from "./components/OperatorPanel.vue";
 
-const SHOT_COUNT = 8
-const TUTORIAL_SECONDS = 15
-const SHOT_COUNTDOWN_SECONDS = 5
-const BETWEEN_SHOTS_MS = 1200
-const AFTER_LAST_SHOT_MS = 800
-const EDITOR_IDLE_MS = 120_000
-const RESULT_TIMEOUT_S = 60
-const PREVIEW_WIDTH = 1280
+const SHOT_COUNT = 8;
+const TUTORIAL_SECONDS = 15;
+const SHOT_COUNTDOWN_SECONDS = 5;
+const BETWEEN_SHOTS_MS = 1200;
+const AFTER_LAST_SHOT_MS = 800;
+const MAX_RETAKES = 3;
+const REVIEW_SECONDS = 20;
+const EDIT_SECONDS = 40;
+const RESULT_TIMEOUT_S = 60;
+const PREVIEW_WIDTH = 1280;
 
 const {
   videoEl,
@@ -29,324 +44,395 @@ const {
   start: startCamera,
   select: selectCamera,
   grab,
-} = useCamera()
+} = useCamera();
 
-// home -> tutorial -> capture -> edit -> processing -> result
-const phase = ref('home')
-const templates = ref([])
-const templatesState = ref('loading') // loading | ready | error
-const selectedTemplateId = ref('')
-const serverDown = ref(false)
-const notice = ref('')
-const panelOpen = ref(false)
+// home -> tutorial -> capture -> review -> [capture ulang] -> edit -> processing -> result
+const phase = ref("home");
+const templates = ref([]);
+const templatesState = ref("loading"); // loading | ready | error
+const selectedTemplateId = ref("");
+const serverDown = ref(false);
+const notice = ref("");
+const panelOpen = ref(false);
 
-const videoAspect = ref(16 / 9)
-const tutorialLeft = ref(0)
-const shotIndex = ref(0)
-const thumbs = ref([])
-const countdown = ref(0)
-const nextPose = ref(false)
-const flash = ref(false)
-const editorRef = ref(null)
+const videoAspect = ref(16 / 9);
+const tutorialLeft = ref(0);
+const shotIndex = ref(0);
+const thumbs = ref([]);
+const countdown = ref(0);
+const nextPose = ref(false);
+const nextPoseText = ref("");
+const captureMode = ref("main"); // main | retake
+const captureQueue = ref([]); // indeks foto yang sedang diambil
+const queuePos = ref(0);
+const retakePicks = ref([]);
+const retakeUsed = ref(false);
+const flash = ref(false);
+const editorRef = ref(null);
 
-const processStep = ref('compose') // compose | upload
-const uploadProgress = ref(0)
-const processError = ref('')
-const resultBlob = shallowRef(null)
-const resultUrl = ref('')
-const sessionResult = ref(null)
-const qrDataUrl = ref('')
-const secondsLeft = ref(0)
+const processStep = ref("compose"); // compose | upload
+const uploadProgress = ref(0);
+const processError = ref("");
+const resultBlob = shallowRef(null);
+const resultUrl = ref("");
+const sessionResult = ref(null);
+const qrDataUrl = ref("");
+const secondsLeft = ref(0); // sisa waktu fase yang punya timer (review, edit, result)
 
-let session = 0
-let shots = [] // canvas resolusi penuh
-const previewShots = shallowRef([]) // salinan kecil untuk editor
-let edit = null // hasil editor: { template, assignment, offsets, filter }
-let uploaded = { main: null, raw: [] }
-let phaseTimer = 0
-let ticker = 0
+let session = 0;
+let shots = []; // canvas resolusi penuh
+const previewShots = shallowRef([]); // salinan kecil untuk editor
+let edit = null; // hasil editor: { template, assignment, transforms, filter }
+let uploaded = { main: null, raw: [] };
+let ticker = 0;
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const showCamera = computed(() => ['home', 'tutorial', 'capture'].includes(phase.value))
-const viewportStyle = computed(() => ({ '--ar': videoAspect.value }))
+const showCamera = computed(() =>
+  ["home", "tutorial", "capture"].includes(phase.value),
+);
+const viewportStyle = computed(() => ({ "--ar": videoAspect.value }));
 const canStart = computed(
-  () => !!stream.value && templatesState.value === 'ready' && templates.value.length > 0,
-)
-const uploadTotal = computed(() => previewShots.value.length + 1)
+  () =>
+    !!stream.value &&
+    templatesState.value === "ready" &&
+    templates.value.length > 0,
+);
+const uploadTotal = computed(() => previewShots.value.length + 1);
+const captureLabel = computed(() =>
+  captureMode.value === "retake"
+    ? {
+        main: `Foto ulang ${queuePos.value + 1}`,
+        sub: `dari ${captureQueue.value.length}`,
+      }
+    : { main: `Foto ${shotIndex.value + 1}`, sub: `dari ${SHOT_COUNT}` },
+);
 
 function onVideoMeta() {
-  const v = videoEl.value
-  if (v?.videoWidth && v.videoHeight) videoAspect.value = v.videoWidth / v.videoHeight
+  const v = videoEl.value;
+  if (v?.videoWidth && v.videoHeight)
+    videoAspect.value = v.videoWidth / v.videoHeight;
 }
 
 // ---------- Timer per fase ----------
 
 function clearPhaseTimers() {
-  clearTimeout(phaseTimer)
-  clearInterval(ticker)
+  clearInterval(ticker);
 }
 
-function armEditorIdle() {
-  clearTimeout(phaseTimer)
-  // Tamu meninggalkan editor: simpan otomatis supaya foto tidak hilang.
-  phaseTimer = setTimeout(() => editorRef.value?.finish(), EDITOR_IDLE_MS)
-}
-
-function onActivity() {
-  if (phase.value === 'edit') armEditorIdle()
+function startPhaseTimer(seconds, onDone) {
+  secondsLeft.value = seconds;
+  ticker = setInterval(() => {
+    if (--secondsLeft.value > 0) return;
+    clearInterval(ticker);
+    onDone();
+  }, 1000);
 }
 
 watch(phase, (p) => {
-  clearPhaseTimers()
-  if (p === 'home') checkServer()
-  else if (p === 'edit') armEditorIdle()
-  else if (p === 'result') {
-    secondsLeft.value = RESULT_TIMEOUT_S
-    ticker = setInterval(() => {
-      if (--secondsLeft.value <= 0) goHome()
-    }, 1000)
-  }
-})
+  clearPhaseTimers();
+  if (p === "home") checkServer();
+  else if (p === "review") startPhaseTimer(REVIEW_SECONDS, continueToEdit);
+  // Waktu edit habis: hasil disimpan apa adanya supaya antrean tamu tetap jalan.
+  else if (p === "edit")
+    startPhaseTimer(EDIT_SECONDS, () => editorRef.value?.finish());
+  else if (p === "result") startPhaseTimer(RESULT_TIMEOUT_S, goHome);
+});
 
 // ---------- Data awal ----------
 
 async function fetchTemplates() {
-  templatesState.value = 'loading'
+  templatesState.value = "loading";
   try {
-    templates.value = await loadTemplates()
-    templatesState.value = templates.value.length ? 'ready' : 'error'
+    templates.value = await loadTemplates();
+    templatesState.value = templates.value.length ? "ready" : "error";
     if (!templates.value.some((t) => t.id === selectedTemplateId.value))
-      selectedTemplateId.value = templates.value[0]?.id ?? ''
+      selectedTemplateId.value = templates.value[0]?.id ?? "";
   } catch (e) {
-    console.error(e)
-    templatesState.value = 'error'
+    console.error(e);
+    templatesState.value = "error";
   }
 }
 
 async function checkServer() {
   try {
-    await getConfig()
-    serverDown.value = false
+    await getConfig();
+    serverDown.value = false;
   } catch {
-    serverDown.value = true
+    serverDown.value = true;
   }
 }
 
 // ---------- Alur ----------
 
 function setResult(blob) {
-  if (resultUrl.value) URL.revokeObjectURL(resultUrl.value)
-  resultBlob.value = blob
-  resultUrl.value = blob ? URL.createObjectURL(blob) : ''
+  if (resultUrl.value) URL.revokeObjectURL(resultUrl.value);
+  resultBlob.value = blob;
+  resultUrl.value = blob ? URL.createObjectURL(blob) : "";
 }
 
 function resetSession() {
-  session++
-  shots = []
-  previewShots.value = []
-  thumbs.value = []
-  edit = null
-  uploaded = { main: null, raw: [] }
-  setResult(null)
-  sessionResult.value = null
-  qrDataUrl.value = ''
-  processError.value = ''
-  countdown.value = 0
-  nextPose.value = false
-  tutorialLeft.value = 0
+  session++;
+  shots = [];
+  previewShots.value = [];
+  thumbs.value = [];
+  edit = null;
+  uploaded = { main: null, raw: [] };
+  setResult(null);
+  sessionResult.value = null;
+  qrDataUrl.value = "";
+  processError.value = "";
+  countdown.value = 0;
+  nextPose.value = false;
+  tutorialLeft.value = 0;
+  retakePicks.value = [];
+  retakeUsed.value = false;
 }
 
 function goHome() {
-  resetSession()
-  phase.value = 'home'
+  resetSession();
+  phase.value = "home";
 }
 
 /** Layar penuh di tablet (harus dipanggil dari sentuhan tamu). Di Chrome kiosk tidak berpengaruh. */
 function enterFullscreen() {
-  const el = document.documentElement
-  if (document.fullscreenElement || document.webkitFullscreenElement) return
-  const request = el.requestFullscreen ?? el.webkitRequestFullscreen
+  const el = document.documentElement;
+  if (document.fullscreenElement || document.webkitFullscreenElement) return;
+  const request = el.requestFullscreen ?? el.webkitRequestFullscreen;
   try {
-    request?.call(el)?.catch?.(() => {})
+    request?.call(el)?.catch?.(() => {});
   } catch {
     // Browser menolak layar penuh; aplikasi tetap berjalan biasa.
   }
 }
 
 async function startSession() {
-  if (!canStart.value) return
-  enterFullscreen()
-  keepAwake()
-  resetSession()
-  notice.value = ''
-  const my = session
-  phase.value = 'tutorial'
-  for (tutorialLeft.value = TUTORIAL_SECONDS; tutorialLeft.value > 0; tutorialLeft.value--) {
-    await sleep(1000)
-    if (my !== session || phase.value !== 'tutorial') return
+  if (!canStart.value) return;
+  enterFullscreen();
+  keepAwake();
+  resetSession();
+  notice.value = "";
+  const my = session;
+  phase.value = "tutorial";
+  for (
+    tutorialLeft.value = TUTORIAL_SECONDS;
+    tutorialLeft.value > 0;
+    tutorialLeft.value--
+  ) {
+    await sleep(1000);
+    if (my !== session || phase.value !== "tutorial") return;
   }
-  runCapture(my)
+  runCapture(my);
 }
 
 function skipTutorial() {
-  if (phase.value === 'tutorial') runCapture(session)
+  if (phase.value === "tutorial") runCapture(session);
 }
 
-async function runCapture(my) {
-  phase.value = 'capture'
-  thumbs.value = Array(SHOT_COUNT).fill(null)
+/**
+ * Ambil foto untuk indeks-indeks tertentu. Sesi awal: semua 8 foto. Retake: hanya foto yang dipilih,
+ * dan foto baru menggantikan foto lama di posisi yang sama.
+ */
+async function runCapture(
+  my,
+  indices = [...Array(SHOT_COUNT).keys()],
+  retake = false,
+) {
+  captureMode.value = retake ? "retake" : "main";
+  captureQueue.value = indices;
+  if (retake) for (const i of indices) thumbs.value[i] = null;
+  else thumbs.value = Array(SHOT_COUNT).fill(null);
+  phase.value = "capture";
 
-  for (let i = 0; i < SHOT_COUNT; i++) {
-    shotIndex.value = i
-    if (i > 0) {
-      nextPose.value = true
-      await sleep(BETWEEN_SHOTS_MS)
-      nextPose.value = false
+  for (let k = 0; k < indices.length; k++) {
+    const i = indices[k];
+    shotIndex.value = i;
+    queuePos.value = k;
+    if (k > 0 || retake) {
+      nextPoseText.value = k === 0 ? "Siap foto ulang" : "Ganti gaya";
+      nextPose.value = true;
+      await sleep(BETWEEN_SHOTS_MS);
+      nextPose.value = false;
     }
     for (let n = SHOT_COUNTDOWN_SECONDS; n > 0; n--) {
-      if (my !== session) return
-      countdown.value = n
-      await sleep(1000)
+      if (my !== session) return;
+      countdown.value = n;
+      await sleep(1000);
     }
-    if (my !== session) return
-    countdown.value = 0
+    if (my !== session) return;
+    countdown.value = 0;
 
-    const frame = grab()
+    const frame = grab();
     if (!frame) {
-      goHome()
-      notice.value = 'Kamera terputus saat memotret. Silakan coba lagi.'
-      return
+      goHome();
+      notice.value = "Kamera terputus saat memotret. Silakan coba lagi.";
+      return;
     }
-    shots.push(frame)
-    const preview = downscale(frame, PREVIEW_WIDTH)
-    previewShots.value = [...previewShots.value, preview]
-    thumbs.value[i] = toDataUrl(preview)
-    flash.value = true
-    setTimeout(() => (flash.value = false), 150)
+    shots[i] = frame;
+    const preview = downscale(frame, PREVIEW_WIDTH);
+    const previews = [...previewShots.value];
+    previews[i] = preview;
+    previewShots.value = previews;
+    thumbs.value[i] = toDataUrl(preview);
+    flash.value = true;
+    setTimeout(() => (flash.value = false), 150);
   }
 
-  await sleep(AFTER_LAST_SHOT_MS)
-  if (my !== session) return
-  phase.value = 'edit'
+  await sleep(AFTER_LAST_SHOT_MS);
+  if (my !== session) return;
+  phase.value = retake ? "edit" : "review";
+}
+
+// ---------- Retake (sekali, maksimal 3 foto) ----------
+
+function toggleRetake(i) {
+  const picks = retakePicks.value;
+  if (picks.includes(i)) retakePicks.value = picks.filter((p) => p !== i);
+  else if (picks.length < MAX_RETAKES) retakePicks.value = [...picks, i];
+}
+
+function startRetake() {
+  if (phase.value !== "review" || retakeUsed.value || !retakePicks.value.length)
+    return;
+  retakeUsed.value = true;
+  const indices = [...retakePicks.value].sort((a, b) => a - b);
+  retakePicks.value = [];
+  runCapture(session, indices, true);
+}
+
+function continueToEdit() {
+  if (phase.value === "review") phase.value = "edit";
 }
 
 function onEditorSave(result) {
-  edit = result
-  setResult(null)
-  uploaded = { main: null, raw: [] }
-  saveSession()
+  edit = result;
+  setResult(null);
+  uploaded = { main: null, raw: [] };
+  saveSession();
 }
 
 /** Compose, lalu upload foto template + semua foto mentah, lalu buat sesi. Bisa diulang tanpa upload ganda. */
 async function saveSession() {
-  const my = session
-  phase.value = 'processing'
-  processError.value = ''
+  const my = session;
+  phase.value = "processing";
+  processError.value = "";
   try {
     if (!resultBlob.value) {
-      processStep.value = 'compose'
-      const slotShots = edit.assignment.map((i) => shots[i])
-      setResult(await compose(edit.template, slotShots, { offsets: edit.offsets, filter: edit.filter }))
+      processStep.value = "compose";
+      const slotShots = edit.assignment.map((i) => shots[i]);
+      setResult(
+        await compose(edit.template, slotShots, {
+          transforms: edit.transforms,
+          filter: edit.filter,
+        }),
+      );
     }
-    if (my !== session) return
+    if (my !== session) return;
 
-    processStep.value = 'upload'
-    if (!uploaded.main) uploaded.main = (await uploadPhoto(resultBlob.value)).id
-    uploadProgress.value = 1
+    processStep.value = "upload";
+    if (!uploaded.main)
+      uploaded.main = (await uploadPhoto(resultBlob.value)).id;
+    uploadProgress.value = 1;
     for (let i = uploaded.raw.length; i < shots.length; i++) {
-      const blob = await canvasToJpeg(shots[i])
-      uploaded.raw.push((await uploadPhoto(blob)).id)
-      if (my !== session) return
-      uploadProgress.value = i + 2
+      const blob = await canvasToJpeg(shots[i]);
+      uploaded.raw.push((await uploadPhoto(blob)).id);
+      if (my !== session) return;
+      uploadProgress.value = i + 2;
     }
-    const res = await createSession(uploaded.main, uploaded.raw)
-    const qr = res.url ? await makeQr(res.url) : ''
-    if (my !== session) return
-    sessionResult.value = res
-    qrDataUrl.value = qr
-    serverDown.value = false
-    phase.value = 'result'
+    const res = await createSession(uploaded.main, uploaded.raw);
+    const qr = res.url ? await makeQr(res.url) : "";
+    if (my !== session) return;
+    sessionResult.value = res;
+    qrDataUrl.value = qr;
+    serverDown.value = false;
+    phase.value = "result";
   } catch (e) {
-    console.error(e)
-    if (my !== session) return
+    console.error(e);
+    if (my !== session) return;
     processError.value =
-      processStep.value === 'compose' ? 'Foto gagal disusun. Silakan coba lagi.' : uploadErrorMessage(e)
+      processStep.value === "compose"
+        ? "Foto gagal disusun. Silakan coba lagi."
+        : uploadErrorMessage(e);
   }
 }
 
 // ---------- Layar tetap menyala (tablet) ----------
 
-let wakeLock = null
+let wakeLock = null;
 
 async function keepAwake() {
-  if (!('wakeLock' in navigator) || document.visibilityState !== 'visible' || wakeLock) return
+  if (
+    !("wakeLock" in navigator) ||
+    document.visibilityState !== "visible" ||
+    wakeLock
+  )
+    return;
   try {
-    wakeLock = await navigator.wakeLock.request('screen')
-    wakeLock.addEventListener('release', () => (wakeLock = null))
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => (wakeLock = null));
   } catch {
     // Tidak didukung atau ditolak; atur "layar tidak pernah mati" di pengaturan tablet.
   }
 }
 
 function onVisibilityChange() {
-  if (document.visibilityState === 'visible') keepAwake()
+  if (document.visibilityState === "visible") keepAwake();
 }
 
 // ---------- Panel operator ----------
 // Keyboard: Ctrl+Shift+S. Layar sentuh: tahan judul di beranda selama 3 detik.
 // Tidak ada tombol yang terlihat tamu.
 
-const PANEL_HOLD_MS = 3000
-let holdTimer = 0
+const PANEL_HOLD_MS = 3000;
+let holdTimer = 0;
 
 function holdStart() {
-  clearTimeout(holdTimer)
-  holdTimer = setTimeout(() => (panelOpen.value = true), PANEL_HOLD_MS)
+  clearTimeout(holdTimer);
+  holdTimer = setTimeout(() => (panelOpen.value = true), PANEL_HOLD_MS);
 }
 
 function holdEnd() {
-  clearTimeout(holdTimer)
+  clearTimeout(holdTimer);
 }
 
 function onKey(e) {
-  if (e.ctrlKey && e.shiftKey && e.code === 'KeyS') {
-    e.preventDefault()
-    panelOpen.value = !panelOpen.value
-  } else if (e.key === 'Escape' && panelOpen.value) {
-    panelOpen.value = false
+  if (e.ctrlKey && e.shiftKey && e.code === "KeyS") {
+    e.preventDefault();
+    panelOpen.value = !panelOpen.value;
+  } else if (e.key === "Escape" && panelOpen.value) {
+    panelOpen.value = false;
   }
 }
 
 function closePanel() {
-  panelOpen.value = false
-  checkServer()
+  panelOpen.value = false;
+  checkServer();
 }
 
 function reloadApp() {
-  location.reload()
+  location.reload();
 }
 
 onMounted(() => {
-  window.addEventListener('keydown', onKey)
-  document.addEventListener('visibilitychange', onVisibilityChange)
-  keepAwake()
-  startCamera()
-  fetchTemplates()
-  checkServer()
-})
+  window.addEventListener("keydown", onKey);
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  keepAwake();
+  startCamera();
+  fetchTemplates();
+  checkServer();
+});
 
 onBeforeUnmount(() => {
-  window.removeEventListener('keydown', onKey)
-  document.removeEventListener('visibilitychange', onVisibilityChange)
-  wakeLock?.release()
-  clearPhaseTimers()
-  clearTimeout(holdTimer)
-})
+  window.removeEventListener("keydown", onKey);
+  document.removeEventListener("visibilitychange", onVisibilityChange);
+  wakeLock?.release();
+  clearPhaseTimers();
+  clearTimeout(holdTimer);
+});
 </script>
 
 <template>
-  <div class="app" :class="`phase-${phase}`" @pointerdown="onActivity">
+  <div class="app" :class="`phase-${phase}`">
     <!-- Satu elemen video untuk semua fase, supaya stream kamera tidak perlu dibuka ulang. -->
     <div v-show="showCamera" class="viewport" :style="viewportStyle">
       <video
@@ -359,7 +445,9 @@ onBeforeUnmount(() => {
         @resize="onVideoMeta"
       ></video>
       <template v-if="phase === 'capture'">
-        <div class="shot-label glass">Foto {{ shotIndex + 1 }} <span>dari {{ SHOT_COUNT }}</span></div>
+        <div class="shot-label glass">
+          {{ captureLabel.main }} <span>{{ captureLabel.sub }}</span>
+        </div>
         <div v-if="countdown" class="countdown">
           <div :key="countdown" class="count">
             <svg viewBox="0 0 120 120" aria-hidden="true">
@@ -369,7 +457,9 @@ onBeforeUnmount(() => {
             <span>{{ countdown }}</span>
           </div>
         </div>
-        <div v-else-if="nextPose" class="next-pose"><span class="glass">Ganti gaya</span></div>
+        <div v-else-if="nextPose" class="next-pose">
+          <span class="glass">{{ nextPoseText }}</span>
+        </div>
       </template>
       <div class="flash" :class="{ on: flash }"></div>
     </div>
@@ -392,18 +482,22 @@ onBeforeUnmount(() => {
         <div v-if="cameraError" class="alert surface">
           <p>{{ cameraError }}</p>
           <button class="btn" :disabled="cameraStarting" @click="startCamera()">
-            {{ cameraStarting ? 'Membuka kamera…' : 'Coba Lagi' }}
+            {{ cameraStarting ? "Membuka kamera…" : "Coba Lagi" }}
           </button>
         </div>
         <div v-else-if="templatesState === 'error'" class="alert surface">
           <p>Bingkai foto gagal dimuat.</p>
           <button class="btn" @click="fetchTemplates">Coba Lagi</button>
         </div>
-        <p v-else-if="!canStart" class="muted loading"><span class="spinner"></span> Menyiapkan kamera…</p>
+        <p v-else-if="!canStart" class="muted loading">
+          <span class="spinner"></span> Menyiapkan kamera…
+        </p>
         <template v-else>
           <p v-if="notice" class="notice">{{ notice }}</p>
           <button class="btn big" @click="startSession">Mulai Foto</button>
-          <p class="meta muted">{{ SHOT_COUNT }} foto · bingkai bisa diganti setelah berfoto</p>
+          <p class="meta muted">
+            {{ SHOT_COUNT }} foto · bingkai bisa diganti setelah berfoto
+          </p>
         </template>
       </div>
 
@@ -438,11 +532,16 @@ onBeforeUnmount(() => {
         <ol class="steps">
           <li>
             <span class="num">1</span>
-            <div><b>Hitungan {{ SHOT_COUNTDOWN_SECONDS }} detik</b> sebelum setiap foto diambil.</div>
+            <div>
+              <b>Hitungan {{ SHOT_COUNTDOWN_SECONDS }} detik</b> sebelum setiap
+              foto diambil.
+            </div>
           </li>
           <li>
             <span class="num">2</span>
-            <div><b>Ganti gaya</b> di setiap foto supaya hasilnya bervariasi.</div>
+            <div>
+              <b>Ganti gaya</b> di setiap foto supaya hasilnya bervariasi.
+            </div>
           </li>
           <li>
             <span class="num">3</span>
@@ -450,7 +549,18 @@ onBeforeUnmount(() => {
           </li>
           <li>
             <span class="num">4</span>
-            <div>Setelah selesai, <b>pilih foto</b>, atur posisinya, dan tambahkan filter.</div>
+            <div>
+              Kurang pas? Kamu boleh
+              <b>mengulang maksimal {{ MAX_RETAKES }} foto</b> setelah semua
+              foto selesai.
+            </div>
+          </li>
+          <li>
+            <span class="num">5</span>
+            <div>
+              Lalu ada <b>{{ EDIT_SECONDS }} detik</b> untuk memilih bingkai,
+              foto, dan filter.
+            </div>
           </li>
         </ol>
         <div class="tutorial-footer">
@@ -462,7 +572,10 @@ onBeforeUnmount(() => {
                 cx="60"
                 cy="60"
                 r="54"
-                :style="{ strokeDashoffset: 339.3 * (1 - tutorialLeft / TUTORIAL_SECONDS) }"
+                :style="{
+                  strokeDashoffset:
+                    339.3 * (1 - tutorialLeft / TUTORIAL_SECONDS),
+                }"
               />
             </svg>
             <span>{{ tutorialLeft }}</span>
@@ -473,13 +586,21 @@ onBeforeUnmount(() => {
     </section>
 
     <!-- ========== SESI FOTO ========== -->
-    <section v-else-if="phase === 'capture'" class="capture-bar" :style="viewportStyle">
+    <section
+      v-else-if="phase === 'capture'"
+      class="capture-bar"
+      :style="viewportStyle"
+    >
       <div class="thumbs">
         <div
           v-for="(thumb, i) in thumbs"
           :key="i"
           class="thumb"
-          :class="{ current: i === shotIndex && !thumb, done: !!thumb }"
+          :class="{
+            current: i === shotIndex && !thumb,
+            done: !!thumb,
+            queued: captureMode === 'retake' && captureQueue.includes(i),
+          }"
           :style="{ aspectRatio: videoAspect }"
         >
           <img v-if="thumb" :src="thumb" alt="" />
@@ -487,6 +608,54 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <button class="btn small ghost" @click="goHome">Batal</button>
+    </section>
+
+    <!-- ========== PILIH RETAKE ========== -->
+    <section v-else-if="phase === 'review'" class="review">
+      <header class="review-head">
+        <div>
+          <p class="eyebrow">Semua foto selesai</p>
+          <h2 class="title">Mau mengulang beberapa foto?</h2>
+          <p class="muted">
+            Sentuh foto yang ingin diulang, maksimal {{ MAX_RETAKES }}.
+            Kesempatan ini hanya sekali.
+          </p>
+        </div>
+        <TimerBadge
+          :left="secondsLeft"
+          :total="REVIEW_SECONDS"
+          label="Waktu memilih"
+        />
+      </header>
+
+      <div class="review-grid">
+        <button
+          v-for="(thumb, i) in thumbs"
+          :key="i"
+          class="review-item"
+          :class="{ picked: retakePicks.includes(i) }"
+          :disabled="
+            !retakePicks.includes(i) && retakePicks.length >= MAX_RETAKES
+          "
+          :style="{ aspectRatio: videoAspect }"
+          @click="toggleRetake(i)"
+        >
+          <img :src="thumb" alt="" />
+          <span class="review-num">{{ i + 1 }}</span>
+          <span v-if="retakePicks.includes(i)" class="review-tag">Ulang</span>
+        </button>
+      </div>
+
+      <div class="review-actions">
+        <button
+          class="btn big ghost"
+          :disabled="!retakePicks.length"
+          @click="startRetake"
+        >
+          Foto Ulang{{ retakePicks.length ? ` (${retakePicks.length})` : "" }}
+        </button>
+        <button class="btn big" @click="continueToEdit">Lanjut Edit</button>
+      </div>
     </section>
 
     <!-- ========== EDIT ========== -->
@@ -497,6 +666,8 @@ onBeforeUnmount(() => {
       :initial-template-id="selectedTemplateId"
       :shots="previewShots"
       :thumbs="thumbs"
+      :seconds-left="secondsLeft"
+      :seconds-total="EDIT_SECONDS"
       @save="onEditorSave"
     />
 
@@ -505,10 +676,14 @@ onBeforeUnmount(() => {
       <div v-if="!processError" class="progress-block">
         <span class="spinner big-spinner"></span>
         <p class="title">
-          {{ processStep === 'compose' ? 'Menyusun foto' : 'Menyimpan foto' }}
+          {{ processStep === "compose" ? "Menyusun foto" : "Menyimpan foto" }}
         </p>
         <template v-if="processStep === 'upload'">
-          <div class="bar"><div :style="{ width: `${(uploadProgress / uploadTotal) * 100}%` }"></div></div>
+          <div class="bar">
+            <div
+              :style="{ width: `${(uploadProgress / uploadTotal) * 100}%` }"
+            ></div>
+          </div>
           <p class="muted">{{ uploadProgress }} dari {{ uploadTotal }}</p>
         </template>
       </div>
@@ -533,17 +708,25 @@ onBeforeUnmount(() => {
           <h2 class="title">Scan untuk mengunduh</h2>
           <div class="qr-card"><img :src="qrDataUrl" alt="Kode QR" /></div>
           <p class="muted">
-            Foto berbingkai dan {{ previewShots.length }} foto asli<br />bisa diunduh lewat HP.
+            Foto berbingkai dan {{ previewShots.length }} foto asli<br />bisa
+            diunduh lewat HP.
           </p>
         </template>
         <template v-else>
           <p class="eyebrow">Tersimpan</p>
           <h2 class="title">Fotomu sudah tersimpan</h2>
-          <p class="muted">Link unduhan belum tersedia.<br />Minta operator menampilkan kode QR-nya nanti.</p>
+          <p class="muted">
+            Link unduhan belum tersedia.<br />Minta operator menampilkan kode
+            QR-nya nanti.
+          </p>
         </template>
         <button class="btn big" @click="goHome">Selesai</button>
         <div class="auto-return">
-          <div class="bar thin"><div :style="{ width: `${(secondsLeft / RESULT_TIMEOUT_S) * 100}%` }"></div></div>
+          <div class="bar thin">
+            <div
+              :style="{ width: `${(secondsLeft / RESULT_TIMEOUT_S) * 100}%` }"
+            ></div>
+          </div>
           <p class="muted">Kembali otomatis dalam {{ secondsLeft }} detik</p>
         </div>
       </div>
@@ -620,14 +803,19 @@ section {
 
 .phase-home .viewport::after,
 .phase-tutorial .viewport::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
 }
 
 .phase-home .viewport::after {
-  background: linear-gradient(90deg, rgba(12, 22, 18, 0.96) 0%, rgba(12, 22, 18, 0.85) 45%, rgba(12, 22, 18, 0.55) 100%);
+  background: linear-gradient(
+    90deg,
+    rgba(12, 22, 18, 0.96) 0%,
+    rgba(12, 22, 18, 0.85) 45%,
+    rgba(12, 22, 18, 0.55) 100%
+  );
 }
 
 .phase-tutorial .viewport::after {
@@ -840,7 +1028,9 @@ circle {
   background: rgba(19, 33, 27, 0.7);
   font-size: 1.05rem;
   font-weight: 600;
-  transition: border-color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
 }
 
 .preview.selected {
@@ -1026,6 +1216,113 @@ circle {
   from {
     opacity: 0;
   }
+}
+
+.thumb.queued:not(.done) {
+  border-style: dashed;
+  border-color: var(--gold);
+}
+
+/* ---------- Pilih retake ---------- */
+
+.review {
+  display: flex;
+  flex-direction: column;
+  gap: 3vh;
+  padding: 5vh 5vw;
+}
+
+.review-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.review-head .title {
+  margin: 8px 0 10px;
+}
+
+.review-head p.muted {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.review-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-content: center;
+  gap: 16px;
+}
+
+.review-item {
+  position: relative;
+  max-height: 30vh;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 3px solid transparent;
+  background: var(--surface);
+  transition:
+    border-color 0.15s,
+    opacity 0.15s,
+    transform 0.12s;
+}
+
+.review-item:active {
+  transform: scale(0.98);
+}
+
+.review-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.review-item.picked {
+  border-color: var(--gold);
+}
+
+.review-item.picked img {
+  opacity: 0.55;
+}
+
+.review-item:disabled {
+  opacity: 0.4;
+}
+
+.review-num {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  min-width: 30px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(12, 22, 18, 0.7);
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.review-tag {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.review-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
 /* ---------- Proses ---------- */
@@ -1219,6 +1516,26 @@ circle {
 
   .thumbs {
     width: 94vw;
+  }
+
+  .review-head {
+    flex-direction: column;
+  }
+
+  .review-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .review-item {
+    max-height: 18vh;
+  }
+
+  .review-actions {
+    justify-content: stretch;
+  }
+
+  .review-actions .btn {
+    flex: 1;
   }
 
   .result {

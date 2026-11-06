@@ -49,9 +49,16 @@ Publik (port 3000):
 ## Aturan data
 - ID foto: 16 karakter hex huruf kecil dari `RandomNumberGenerator`. Validasi dengan regex `^[a-f0-9]{16}$`
   di SETIAP route yang menerima id, sebelum menyentuh file system.
-- Foto disimpan di `server/photos/{id}.jpg`. Folder dibuat otomatis jika belum ada.
-- Sesi disimpan di `server/sessions/{id}.json`. Id sesi memakai format dan validasi yang sama dengan id foto,
-  dan semua id foto di dalam file sesi divalidasi ulang dengan regex saat dibaca.
+- Foto yang baru di-upload disimpan sementara di `server/photos/{id}.jpg`. Saat `POST /api/sessions`,
+  semua foto sesi dipindahkan ke satu folder per sesi:
+  `server/sessions/{yyyy-MM-dd_HH-mm-ss}_{sessionId}/` berisi `bingkai.jpg`, `foto-01.jpg`, `foto-02.jpg`, ...
+  dan `session.json` (pemetaan id foto ke nama file). Logika ini ada di `server/PhotoStore.cs`.
+- URL publik tetap memakai id foto; lokasi file dicari lewat indeks di memori yang dibangun saat server menyala.
+  Foto yang sudah masuk sesi tidak boleh dipakai di sesi lain.
+- Id sesi memakai format dan validasi yang sama dengan id foto. Isi `session.json` divalidasi ulang saat dibaca:
+  semua id lolos regex dan nama file harus `bingkai.jpg` atau `foto-NN.jpg` (tidak bisa keluar folder).
+- Sesi format lama (`server/sessions/{id}.json` + foto di `server/photos/`) dipindahkan otomatis ke format folder
+  saat server menyala.
 - Satu-satunya halaman publik yang menampilkan lebih dari satu foto adalah `/s/{id}`, dan isinya hanya
   foto dari sesi itu. Tidak ada halaman publik yang menampilkan daftar semua foto atau semua sesi.
 
@@ -69,8 +76,11 @@ Filter opsional hanya mengenai foto, lalu PNG frame digambar di atasnya. Hasil a
 
 ## Alur sesi
 Beranda (preview template, tombol Mulai) → tutorial bersiap 15 detik (bisa dilewati) →
-8 foto dengan hitung mundur 5 detik per foto → editor (pilih tema/template, pilih foto per slot,
-geser posisi foto, filter) → upload foto berbingkai + 8 foto asli → `POST /api/sessions` → QR ke `/s/{id}`.
+8 foto dengan hitung mundur 5 detik per foto → pilih retake (timer 20 detik; sekali, maksimal 3 foto,
+foto baru menggantikan foto lama di posisi yang sama) → editor dengan timer 30 detik (pilih bingkai,
+pilih foto per slot, geser posisi, balik horizontal/vertikal, zoom 100–300% per foto, filter; waktu habis =
+otomatis disimpan) → upload foto berbingkai + 8 foto asli → `POST /api/sessions` → QR ke `/s/{id}`
+(layar hasil 60 detik). Konstanta waktu ada di bagian atas `web/src/App.vue`.
 
 ## Kamera
 - Pakai `navigator.mediaDevices.getUserMedia`, minta resolusi ideal 1920x1080.

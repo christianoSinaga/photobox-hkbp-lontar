@@ -1,7 +1,7 @@
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Server.Kestrel.Core.Features;
 
 const int AdminPort = 4000;
 const int PublicPort = 3000;
@@ -18,19 +18,15 @@ builder.WebHost.ConfigureKestrel(kestrel =>
 
 var app = builder.Build();
 
-// Folder induk untuk photos/ dan data/. Default: folder proyek server (saat `dotnet run`).
-// Skrip start memberi --StorageDir agar versi publish tetap menyimpan ke server/photos.
+// Folder induk untuk photos/, sessions/ dan data/. Default: folder proyek server (saat `dotnet run`).
+// Skrip start memberi --StorageDir agar versi publish tetap menyimpan ke folder server/.
 var storageDir = builder.Configuration["StorageDir"] is { Length: > 0 } dir
     ? Path.GetFullPath(dir)
     : app.Environment.ContentRootPath;
-var photosDir = Path.Combine(storageDir, "photos");
-Directory.CreateDirectory(photosDir);
-var sessionsDir = Path.Combine(storageDir, "sessions");
-Directory.CreateDirectory(sessionsDir);
+var store = new PhotoStore(storageDir, app.Logger);
 var config = new ConfigStore(Path.Combine(storageDir, "data", "config.json"));
-app.Logger.LogInformation("Foto disimpan di {PhotosDir}", photosDir);
+app.Logger.LogInformation("Foto disimpan di {SessionsDir} (satu folder per sesi)", store.SessionsDir);
 
-var idRegex = new Regex("^[a-f0-9]{16}$", RegexOptions.CultureInvariant);
 // \z, bukan $, supaya path yang diakhiri newline tidak lolos.
 var publicPathRegex = new Regex(@"^/[pfds]/[a-f0-9]{16}\z", RegexOptions.CultureInvariant);
 
@@ -88,14 +84,22 @@ api.MapPost("/photos", async (HttpContext ctx) =>
     if (ctx.Request.ContentLength > MaxPhotoBytes)
         return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
 
+    // Upload dari tablet lewat tunnel bisa tersendat sebentar saat sinyal naik-turun.
+    // Default Kestrel memutus koneksi di bawah 240 B/s setelah 5 detik; untuk foto dibuat lebih sabar.
+    var rateFeature = ctx.Features.Get<IHttpMinRequestBodyDataRateFeature>();
+    if (rateFeature is not null)
+        rateFeature.MinDataRate = new Microsoft.AspNetCore.Server.Kestrel.Core.MinDataRate(bytesPerSecond: 100, gracePeriod: TimeSpan.FromSeconds(30));
+
     using var buffer = new MemoryStream();
     try
     {
         await ctx.Request.Body.CopyToAsync(buffer, ctx.RequestAborted);
     }
-    catch (BadHttpRequestException e) when (e.StatusCode == StatusCodes.Status413PayloadTooLarge)
+    catch (BadHttpRequestException e)
     {
-        return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+        // 413 = terlalu besar, 408 = koneksi terlalu lambat/terputus. Aplikasi menampilkan tombol Coba Lagi.
+        app.Logger.LogWarning("Upload foto gagal ({Status}): {Message}", e.StatusCode, e.Message);
+        return Results.StatusCode(e.StatusCode);
     }
 
     var bytes = buffer.GetBuffer();
@@ -103,120 +107,61 @@ api.MapPost("/photos", async (HttpContext ctx) =>
     if (length < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 || bytes[2] != 0xFF)
         return Results.BadRequest(new { error = "Body bukan file JPEG." });
 
-    string id;
-    do id = NewId(); while (File.Exists(PhotoPath(id)));
-
-    // Tulis ke file sementara dulu agar /f/{id} tidak pernah menyajikan file setengah jadi.
-    var tempPath = Path.Combine(photosDir, id + ".tmp");
-    await File.WriteAllBytesAsync(tempPath, bytes.AsMemory(0, length), ctx.RequestAborted);
-    File.Move(tempPath, PhotoPath(id));
-
+    var id = await store.SaveAsync(bytes.AsMemory(0, length), ctx.RequestAborted);
     var baseUrl = config.PublicBaseUrl;
     return Results.Ok(new PhotoCreated(id, baseUrl is null ? null : $"{baseUrl}/p/{id}"));
 });
 
-api.MapGet("/photos", (int? limit) =>
-{
-    var take = Math.Clamp(limit ?? 60, 1, 500);
-    var photos = new DirectoryInfo(photosDir)
-        .EnumerateFiles("*.jpg")
-        .Where(f => f.Extension == ".jpg" && IsValidId(Path.GetFileNameWithoutExtension(f.Name)))
-        .OrderByDescending(f => f.CreationTimeUtc)
-        .Take(take)
-        .Select(f => new PhotoInfo(Path.GetFileNameWithoutExtension(f.Name), f.CreationTimeUtc))
-        .ToList();
-    return photos;
-});
+api.MapGet("/photos", (int? limit) => store.ListPhotos(Math.Clamp(limit ?? 60, 1, 500)));
 
 // Sesi = satu foto template (main) + semua foto mentah dari sesi itu, di balik satu QR.
+// Foto-fotonya dipindahkan ke folder sesi sendiri.
 api.MapPost("/sessions", (SessionRequest body) =>
 {
     var photoIds = body.Photos ?? [];
-    if (!IsValidId(body.Main) || photoIds.Count > MaxPhotosPerSession || !photoIds.All(IsValidId))
+    if (!PhotoIds.IsValid(body.Main) || photoIds.Count > MaxPhotosPerSession || !photoIds.All(PhotoIds.IsValid))
         return Results.BadRequest(new { error = "ID foto tidak valid." });
-    if (!File.Exists(PhotoPath(body.Main!)) || !photoIds.All(p => File.Exists(PhotoPath(p))))
-        return Results.BadRequest(new { error = "Foto tidak ditemukan." });
 
-    string id;
-    do id = NewId(); while (File.Exists(SessionPath(id)));
-    var data = new SessionData(body.Main!, photoIds, DateTime.UtcNow);
-    File.WriteAllText(SessionPath(id), JsonSerializer.Serialize(data, JsonSerializerOptions.Web));
+    var (id, error) = store.CreateSession(body.Main, photoIds);
+    if (id is null) return Results.BadRequest(new { error });
 
     var baseUrl = config.PublicBaseUrl;
     return Results.Ok(new PhotoCreated(id, baseUrl is null ? null : $"{baseUrl}/s/{id}"));
 });
 
 api.MapGet("/sessions", (int? limit) =>
-{
-    var take = Math.Clamp(limit ?? 60, 1, 500);
-    return new DirectoryInfo(sessionsDir)
-        .EnumerateFiles("*.json")
-        .Where(f => f.Extension == ".json" && IsValidId(Path.GetFileNameWithoutExtension(f.Name)))
-        .OrderByDescending(f => f.CreationTimeUtc)
-        .Take(take)
-        .Select(f => (Id: Path.GetFileNameWithoutExtension(f.Name), Data: ReadSession(Path.GetFileNameWithoutExtension(f.Name))))
-        .Where(s => s.Data is not null)
-        .Select(s => new SessionInfo(s.Id, s.Data!.Main, s.Data.Photos.Count, s.Data.CreatedAt))
-        .ToList();
-});
+    store.ListSessions(Math.Clamp(limit ?? 60, 1, 500))
+        .Select(s => new SessionInfo(s.Id, s.Main.Id, s.Photos.Count, s.CreatedAt)));
 
 // ---------- Publik (port 3000, juga bisa diakses dari port 4000) ----------
 
 app.MapGet("/s/{id}", (string id) =>
 {
-    if (!IsValidId(id)) return Results.NotFound();
-    var session = ReadSession(id);
-    if (session is null) return Results.NotFound();
-    var photoIds = session.Photos.Where(p => File.Exists(PhotoPath(p))).ToList();
-    return Results.Content(PublicPage.RenderSession(session.Main, photoIds), "text/html; charset=utf-8");
+    var session = PhotoIds.IsValid(id) ? store.GetSession(id) : null;
+    if (session is null || store.GetPhotoPath(session.Main.Id) is null) return Results.NotFound();
+    var photoIds = session.Photos.Select(p => p.Id).Where(p => store.GetPhotoPath(p) is not null).ToList();
+    return Results.Content(PublicPage.RenderSession(session.Main.Id, photoIds), "text/html; charset=utf-8");
 });
 
 app.MapGet("/p/{id}", (string id) =>
 {
-    if (!IsValidId(id) || !File.Exists(PhotoPath(id))) return Results.NotFound();
+    if (!PhotoIds.IsValid(id) || store.GetPhotoPath(id) is null) return Results.NotFound();
     return Results.Content(PublicPage.Render(id), "text/html; charset=utf-8");
 });
 
 app.MapGet("/f/{id}", (string id) =>
 {
-    if (!IsValidId(id) || !File.Exists(PhotoPath(id))) return Results.NotFound();
-    return Results.File(PhotoPath(id), "image/jpeg");
+    var path = PhotoIds.IsValid(id) ? store.GetPhotoPath(id) : null;
+    return path is null ? Results.NotFound() : Results.File(path, "image/jpeg");
 });
 
 app.MapGet("/d/{id}", (string id) =>
 {
-    if (!IsValidId(id) || !File.Exists(PhotoPath(id))) return Results.NotFound();
-    return Results.File(PhotoPath(id), "image/jpeg", $"natal-naposo-{id}.jpg");
+    var path = PhotoIds.IsValid(id) ? store.GetPhotoPath(id) : null;
+    return path is null ? Results.NotFound() : Results.File(path, "image/jpeg", $"natal-naposo-{id}.jpg");
 });
 
 app.Run();
-
-// Panjang dicek juga karena $ di regex .NET menerima newline di akhir string.
-bool IsValidId(string? id) => id is { Length: 16 } && idRegex.IsMatch(id);
-
-string PhotoPath(string id) => Path.Combine(photosDir, id + ".jpg");
-
-string SessionPath(string id) => Path.Combine(sessionsDir, id + ".json");
-
-// File sesi divalidasi ulang saat dibaca: semua ID di dalamnya harus lolos regex sebelum dipakai.
-SessionData? ReadSession(string id)
-{
-    try
-    {
-        var path = SessionPath(id);
-        if (!File.Exists(path)) return null;
-        var data = JsonSerializer.Deserialize<SessionData>(File.ReadAllText(path), JsonSerializerOptions.Web);
-        if (data is null || !IsValidId(data.Main) || data.Photos is null || !data.Photos.All(IsValidId)) return null;
-        if (!File.Exists(PhotoPath(data.Main))) return null;
-        return data;
-    }
-    catch (Exception e) when (e is IOException or JsonException)
-    {
-        return null;
-    }
-}
-
-static string NewId() => Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
 
 static bool TryNormalizeBaseUrl(string? input, out string? normalized)
 {
@@ -233,7 +178,6 @@ record ConfigDto(string? PublicBaseUrl);
 record PhotoCreated(string Id, string? Url);
 record PhotoInfo(string Id, DateTime CreatedAt);
 record SessionRequest(string? Main, List<string>? Photos);
-record SessionData(string Main, List<string> Photos, DateTime CreatedAt);
 record SessionInfo(string Id, string Main, int PhotoCount, DateTime CreatedAt);
 
 /// <summary>URL publik disimpan di memori dan di disk, supaya tetap ada setelah server restart.</summary>
