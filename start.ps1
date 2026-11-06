@@ -1,5 +1,5 @@
 # Menyalakan photobox: server hasil publish + Chrome mode kiosk ke http://localhost:4000.
-# Cara pakai: klik kanan file ini -> "Run with PowerShell".
+# Cara pakai: double-click start.cmd (jangan jalankan file .ps1 ini langsung).
 # Jendela PowerShell ini adalah server. JANGAN ditutup selama acara.
 
 $ErrorActionPreference = 'Stop'
@@ -26,7 +26,7 @@ function Test-Server {
     }
 }
 
-if (-not (Test-Path $serverExe)) { Stop-WithMessage 'Aplikasi belum di-build. Jalankan build.ps1 dulu.' }
+if (-not (Test-Path $serverExe)) { Stop-WithMessage 'Aplikasi belum di-build. Double-click build.cmd dulu.' }
 
 $server = $null
 if (Test-Server) {
